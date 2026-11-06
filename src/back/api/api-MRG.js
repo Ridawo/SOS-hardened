@@ -1,4 +1,5 @@
 import Datastore from "nedb";
+import { verifyToken, stringFilter } from "./security.js";
 
 export const BASE_URL_API_MRG = "/api/v1/alcohol-consumptions-per-capita";
 
@@ -30,7 +31,7 @@ export function loadBackendMRG(app) {
         let limit = 0;
 
         // Búsquedas adaptadas a tus campos
-        if (req.query.nation) query.nation = req.query.nation;
+        if (stringFilter(req.query.nation)) query.nation = stringFilter(req.query.nation);
         if (req.query.date_year) query.date_year = parseInt(req.query.date_year);
         if (req.query.alcohol_litre) query.alcohol_litre = parseFloat(req.query.alcohol_litre);
         if (req.query.recorded_consumption) query.recorded_consumption = parseFloat(req.query.recorded_consumption);
@@ -321,7 +322,7 @@ export function loadBackendMRG(app) {
         let offset = 0;
         let limit = 0;
 
-        if (req.query.nation) query.nation = req.query.nation;
+        if (stringFilter(req.query.nation)) query.nation = stringFilter(req.query.nation);
         if (req.query.date_year) query.date_year = parseInt(req.query.date_year);
         if (req.query.alcohol_litre) query.alcohol_litre = parseFloat(req.query.alcohol_litre);
         if (req.query.recorded_consumption) query.recorded_consumption = parseFloat(req.query.recorded_consumption);
@@ -348,7 +349,7 @@ export function loadBackendMRG(app) {
     });
 
     // POST /api/v1/alcohol-consumptions-per-capita
-    app.post(BASE_URL_API_MRG, (req, res) => {
+    app.post(BASE_URL_API_MRG, verifyToken, (req, res) => {
         const newData = req.body;
 
         if (!isValidAlcoholStats(newData)) {
@@ -375,7 +376,7 @@ export function loadBackendMRG(app) {
     });
 
     // DELETE /api/v1/alcohol-consumptions-per-capita
-    app.delete(BASE_URL_API_MRG, (req, res) => {
+    app.delete(BASE_URL_API_MRG, verifyToken, (req, res) => {
         db.remove({}, { multi: true }, (err, numRemoved) => {
             if (err) return res.status(500).json({ error: "Error interno del servidor" });
             res.status(200).json({ message: "OK: Todos los recursos han sido eliminados." });
@@ -388,7 +389,7 @@ export function loadBackendMRG(app) {
     });
 
     // PUT /api/v1/alcohol-consumptions-per-capita/:nation/:year
-    app.put(BASE_URL_API_MRG + "/:nation/:date_year", (req, res) => {
+    app.put(BASE_URL_API_MRG + "/:nation/:date_year", verifyToken, (req, res) => {
         const nationParam = req.params.nation;
         const yearParam = parseInt(req.params.date_year);
         const body = req.body;
@@ -413,7 +414,7 @@ export function loadBackendMRG(app) {
     });
 
     // DELETE /api/v1/alcohol-consumptions-per-capita/:nation/:year
-    app.delete(BASE_URL_API_MRG + "/:nation/:date_year", (req, res) => {
+    app.delete(BASE_URL_API_MRG + "/:nation/:date_year", verifyToken, (req, res) => {
         const nationParam = req.params.nation;
         const yearParam = parseInt(req.params.date_year);
 

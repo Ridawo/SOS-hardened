@@ -1,10 +1,8 @@
 import { dbAlcohol as db } from "./db.js";
-import jwt from "jsonwebtoken"; // 1. Importamos la librería
+import jwt from "jsonwebtoken";
+import { verifyToken, JWT_SECRET, ADMIN_USER, ADMIN_PASSWORD, stringFilter } from "./security.js";
 
 export const BASE_URL_API_MRG_V2 = "/api/v2/alcohol-consumptions-per-capita";
-
-// 2. Definimos tu clave secreta
-const SECRET_KEY = "contraseñaMiguel";
 
 const INITIAL_DATA = [
     // Spain
@@ -224,31 +222,6 @@ export function loadBackendMRGv2(app) {
     });
 
 
-    // --- MIDDLEWARE DE VERIFICACIÓN ---
-    // Este es el "portero" que revisa el token antes de entrar a las rutas protegidas
-    function verifyToken(req, res, next) {
-        const authHeader = req.headers['authorization'];
-
-        if (!authHeader) {
-            return res.status(403).json({ error: "No se ha proporcionado un token de autenticación." });
-        }
-
-        // El formato esperado es "Bearer <TOKEN>"
-        const token = authHeader.split(" ")[1];
-
-        if (!token) {
-            return res.status(403).json({ error: "Formato de token incorrecto." });
-        }
-
-        jwt.verify(token, SECRET_KEY, (err, decoded) => {
-            if (err) {
-                return res.status(401).json({ error: "Token inválido o caducado." });
-            }
-            req.user = decoded;
-            next(); // Si todo está bien, pasamos a la función de la API
-        });
-    }
-
     function isValidAlcoholStats(body) {
         const expectedKeys = ["nation", "date_year", "alcohol_litre", "recorded_consumption", "unrecorded_consumption"];
         const bodyKeys = Object.keys(body);
@@ -260,12 +233,12 @@ export function loadBackendMRGv2(app) {
     }
 
     // --- RUTA DE LOGIN ---
-    // Ruta para obtener el token. Usuario: admin / Pass: admin
+    // Usuario/contraseña y secreto de firma vienen del .env, no del código fuente.
     app.post(BASE_URL_API_MRG_V2 + "/login", (req, res) => {
         const { username, password } = req.body;
 
-        if (username === "admin" && password === "admin") {
-            const token = jwt.sign({ user: username }, SECRET_KEY, { expiresIn: "1h" });
+        if (username === ADMIN_USER && password === ADMIN_PASSWORD) {
+            const token = jwt.sign({ user: username }, JWT_SECRET, { expiresIn: "1h" });
             return res.status(200).json({ token: token });
         } else {
             return res.status(401).json({ error: "Usuario o contraseña incorrectos." });
@@ -300,7 +273,7 @@ export function loadBackendMRGv2(app) {
         let offset = 0;
         let limit = 0;
 
-        if (req.query.nation) query.nation = req.query.nation;
+        if (stringFilter(req.query.nation)) query.nation = stringFilter(req.query.nation);
         if (req.query.date_year) query.date_year = parseInt(req.query.date_year);
         if (req.query.alcohol_litre) query.alcohol_litre = parseFloat(req.query.alcohol_litre);
         if (req.query.recorded_consumption) query.recorded_consumption = parseFloat(req.query.recorded_consumption);

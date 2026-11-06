@@ -1,4 +1,5 @@
 import { dbLiteracy as db } from "./db.js";
+import { verifyToken, stringFilter } from "./security.js";
 
 export const BASE_URL_API_TGG_V2 = "/api/v2/literacy-rates";
 
@@ -153,7 +154,7 @@ export function loadBackendTGGv2(app) {
         let offset = 0;
         let limit = 0;
 
-        if (req.query.country) query.country = req.query.country;
+        if (stringFilter(req.query.country)) query.country = req.query.country;
         if (req.query.year) query.year = parseInt(req.query.year);
         if (req.query.total) query.total = parseFloat(req.query.total);
         if (req.query.male) query.male = parseFloat(req.query.male);
@@ -206,7 +207,7 @@ export function loadBackendTGGv2(app) {
     });
 
     // POST /api/v2/literacy-rates
-    app.post(BASE_URL_API_TGG_V2, (req, res) => {
+    app.post(BASE_URL_API_TGG_V2, verifyToken, (req, res) => {
         const newData = req.body;
 
         if (!isValidLiteracyStats(newData)) {
@@ -233,7 +234,7 @@ export function loadBackendTGGv2(app) {
     });
 
     // DELETE /api/v2/literacy-rates
-    app.delete(BASE_URL_API_TGG_V2, (req, res) => {
+    app.delete(BASE_URL_API_TGG_V2, verifyToken, (req, res) => {
         db.remove({}, { multi: true }, (err, numRemoved) => {
             if (err) return res.status(500).json({ error: "Error interno del servidor" });
             res.status(200).json({ message: "OK: Todos los recursos han sido eliminados." });
@@ -246,7 +247,7 @@ export function loadBackendTGGv2(app) {
     });
 
     // PUT /api/v2/literacy-rates/:country/:year
-    app.put(BASE_URL_API_TGG_V2 + "/:country/:year", (req, res) => {
+    app.put(BASE_URL_API_TGG_V2 + "/:country/:year", verifyToken, (req, res) => {
         const countryParam = req.params.country;
         const yearParam = parseInt(req.params.year);
         const body = req.body;
@@ -271,7 +272,7 @@ export function loadBackendTGGv2(app) {
     });
 
     // DELETE /api/v2/literacy-rates/:country/:year
-    app.delete(BASE_URL_API_TGG_V2 + "/:country/:year", (req, res) => {
+    app.delete(BASE_URL_API_TGG_V2 + "/:country/:year", verifyToken, (req, res) => {
         const countryParam = req.params.country;
         const yearParam = parseInt(req.params.year);
 
