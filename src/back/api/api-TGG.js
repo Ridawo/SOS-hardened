@@ -1,4 +1,5 @@
 import Datastore from "nedb";
+import { verifyToken, stringFilter } from "./security.js";
 
 export const BASE_URL_API_TGG = "/api/v1/literacy-rates";
 
@@ -153,7 +154,7 @@ export function loadBackendTGG(app) {
         let offset = 0;
         let limit = 0;
 
-        if (req.query.country) query.country = req.query.country;
+        if (stringFilter(req.query.country)) query.country = req.query.country;
         if (req.query.year) query.year = parseInt(req.query.year);
         if (req.query.total) query.total = parseFloat(req.query.total);
         if (req.query.male) query.male = parseFloat(req.query.male);
@@ -206,7 +207,7 @@ export function loadBackendTGG(app) {
     });
 
     // POST /api/v1/literacy-rates
-    app.post(BASE_URL_API_TGG, (req, res) => {
+    app.post(BASE_URL_API_TGG, verifyToken, (req, res) => {
         const newData = req.body;
 
         if (!isValidLiteracyStats(newData)) {
@@ -233,7 +234,7 @@ export function loadBackendTGG(app) {
     });
 
     // DELETE /api/v1/literacy-rates
-    app.delete(BASE_URL_API_TGG, (req, res) => {
+    app.delete(BASE_URL_API_TGG, verifyToken, (req, res) => {
         db.remove({}, { multi: true }, (err, numRemoved) => {
             if (err) return res.status(500).json({ error: "Error interno del servidor" });
             res.status(200).json({ message: "OK: Todos los recursos han sido eliminados." });
@@ -246,7 +247,7 @@ export function loadBackendTGG(app) {
     });
 
     // PUT /api/v1/literacy-rates/:country/:year
-    app.put(BASE_URL_API_TGG + "/:country/:year", (req, res) => {
+    app.put(BASE_URL_API_TGG + "/:country/:year", verifyToken, (req, res) => {
         const countryParam = req.params.country;
         const yearParam = parseInt(req.params.year);
         const body = req.body;
@@ -271,7 +272,7 @@ export function loadBackendTGG(app) {
     });
 
     // DELETE /api/v1/literacy-rates/:country/:year
-    app.delete(BASE_URL_API_TGG + "/:country/:year", (req, res) => {
+    app.delete(BASE_URL_API_TGG + "/:country/:year", verifyToken, (req, res) => {
         const countryParam = req.params.country;
         const yearParam = parseInt(req.params.year);
 

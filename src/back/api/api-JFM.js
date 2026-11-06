@@ -1,4 +1,5 @@
 import Datastore from "nedb";
+import { verifyToken, stringFilter } from "./security.js";
 
 export const BASE_URL_API_JFM = "/api/v1/road-fatalities";
 
@@ -78,13 +79,13 @@ export function loadBackendJFM(app) {
         if (req.query.limit) limit = parseInt(req.query.limit);
 
         // Búsquedas directas
-        if (req.query.nation) query.nation = req.query.nation.toLowerCase();
+        if (stringFilter(req.query.nation)) query.nation = req.query.nation.toLowerCase();
         if (req.query.population_death_rate) query.population_death_rate = parseFloat(req.query.population_death_rate);
         if (req.query.vehicle_death_rate) query.vehicle_death_rate = req.query.vehicle_death_rate === "null" ? null : parseFloat(req.query.vehicle_death_rate);
         if (req.query.distance_death_rate) query.distance_death_rate = req.query.distance_death_rate === "null" ? null : parseFloat(req.query.distance_death_rate);
         if (req.query.total_death) query.total_death = parseInt(req.query.total_death);
-        if (req.query.income_level) query.income_level = req.query.income_level.toLowerCase();
-        if (req.query.traffic_side) query.traffic_side = req.query.traffic_side.toLowerCase();
+        if (stringFilter(req.query.income_level)) query.income_level = req.query.income_level.toLowerCase();
+        if (stringFilter(req.query.traffic_side)) query.traffic_side = req.query.traffic_side.toLowerCase();
 
         // Búsqueda por año (exacto) o por rango (from / to)
         if (req.query.from || req.query.to) {
@@ -147,7 +148,7 @@ export function loadBackendJFM(app) {
 
     // POST colección 
     // Ej: POST /api/v1/road-fatalities
-    app.post(BASE_URL_API_JFM, (req, res) => {
+    app.post(BASE_URL_API_JFM, verifyToken, (req, res) => {
         const newData = req.body;
 
         // Comprobar estrictamente el formato esperado
@@ -189,7 +190,7 @@ export function loadBackendJFM(app) {
 
     // PUT recurso concreto (Actualiza los datos)
     // Ej: PUT /api/v1/road-fatalities/spain/2013
-    app.put(BASE_URL_API_JFM + "/:nation/:year", (req, res) => {
+    app.put(BASE_URL_API_JFM + "/:nation/:year", verifyToken, (req, res) => {
         const nationParam = req.params.nation.toLowerCase();
         const yearParam = parseInt(req.params.year);
         const body = req.body;
@@ -216,7 +217,7 @@ export function loadBackendJFM(app) {
 
     // DELETE a todo
     //Ej: DELETE  /api/v1/road-fatalities
-    app.delete(BASE_URL_API_JFM, (req, res) => {
+    app.delete(BASE_URL_API_JFM, verifyToken, (req, res) => {
         db.remove({}, { multi: true }, (err, numRemoved) => {
             if (err) return res.status(500).json({ error: "Error interno del servidor" });
             res.status(200).json({ message: "OK: Todos los recursos eliminados." });
@@ -226,7 +227,7 @@ export function loadBackendJFM(app) {
 
     // DELETE a recurso concreto    
     //Ej: DELETE  /api/v1/road-fatalities/spain/2013  (borra solo un país en un año específico)
-    app.delete(BASE_URL_API_JFM + "/:nation/:year", (req, res) => {
+    app.delete(BASE_URL_API_JFM + "/:nation/:year", verifyToken, (req, res) => {
         const nationParam = req.params.nation.toLowerCase();
         const yearParam = parseInt(req.params.year);
 
