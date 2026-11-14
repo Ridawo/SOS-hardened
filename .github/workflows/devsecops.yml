@@ -1,0 +1,143 @@
+# Pipeline DevSecOps (PAI-4, SSII) para SOS-hardened.
+# Integra 4 herramientas de seguridad (SCA, SAST, DAST, IaC/contenedor),
+# sube cada informe a DefectDojo y aplica un quality gate bloqueante sobre el SCA.
+# El workflow original sin seguridad (cicd.yaml) se conserva como referencia historica.
+name: DevSecOps
+
+on: [push, pull_request]
+
+env:
+  # DefectDojo en localhost:8082 (8081 esta ocupado por otro contenedor).
+  DEFECTDOJO_URL: http://localhost:8082
+  DEFECTDOJO_API_KEY: ${{ secrets.DEFECTDOJO_API_KEY }}
+
+jobs:
+  devsecops:
+    runs-on: [self-hosted, linux]
+
+    steps:
+      # --- Preparacion ---
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      # Se usa el python3 del sistema del runner (self-hosted Kali): actions/setup-python
+      # descarga binarios para Ubuntu y suele fallar en Kali. Los scripts solo usan stdlib.
+
+      - name: Install dependencies (backend)
+        run: npm ci || npm install
+
+      - name: Install dependencies (frontend)
+        working-directory: src/front/svelte-app
+        run: npm ci || npm install
+
+      # --- SCA: npm audit (material del quality gate final) ---
+      - name: SCA - npm audit
+        continue-on-error: true
+        run: npm audit --json > npm-audit.json || true
+
+      - name: Upload SCA report to DefectDojo
+        continue-on-error: true
+        run: python3 devsecops/scripts/upload_to_defectdojo.py --scan-type "NPM Audit v7+ Scan" --file npm-audit.json
+
+      # --- SAST: Semgrep (docker, salida JSON) ---
+      - name: SAST - Semgrep
+        continue-on-error: true
+        run: |
+          docker run --rm \
+            -v "${{ github.workspace }}:/src" -w /src \
+            semgrep/semgrep:1.90.0 \
+            semgrep scan --config devsecops/config/semgrep.yml --json --output semgrep.json .
+
+      - name: Upload SAST report to DefectDojo
+        continue-on-error: true
+        run: python3 devsecops/scripts/upload_to_defectdojo.py --scan-type "Semgrep JSON Report" --file semgrep.json
+
+      # --- Build: frontend + imagen de la app ---
+      - name: Build frontend
+        run: npm run build
+
+      - name: Build app image
+        run: docker build -t sos-hardened:ci .
+
+      # --- IaC/contenedor: Trivy (docker, config + image, salida JSON) ---
+      - name: Trivy - IaC config scan
+        continue-on-error: true
+        run: |
+          docker run --rm \
+            -v "${{ github.workspace }}:/workspace" -w /workspace \
+            aquasec/trivy:0.58.1 \
+            config --config devsecops/config/trivy.yaml --format json --output trivy-config.json .
+
+      - name: Trivy - image scan
+        continue-on-error: true
+        run: |
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -v "${{ github.workspace }}:/workspace" -w /workspace \
+            aquasec/trivy:0.58.1 \
+            image --config devsecops/config/trivy.yaml --format json --output trivy-image.json sos-hardened:ci
+
+      - name: Upload Trivy IaC report to DefectDojo
+        continue-on-error: true
+        run: python3 devsecops/scripts/upload_to_defectdojo.py --scan-type "Trivy Scan" --file trivy-config.json
+
+      - name: Upload Trivy image report to DefectDojo
+        continue-on-error: true
+        run: python3 devsecops/scripts/upload_to_defectdojo.py --scan-type "Trivy Scan" --file trivy-image.json
+
+      # --- DAST: ZAP baseline contra la app levantada (docker, salida XML) ---
+      # La app no arranca sin JWT_SECRET/ADMIN_USER/ADMIN_PASSWORD. Se generan
+      # aleatorias en cada ejecucion (no hay ninguna escrita en el repo) y se pasan
+      # al compose, que usa la imagen sos-hardened:ci.
+      - name: DAST - start app (docker compose)
+        continue-on-error: true
+        run: |
+          export JWT_SECRET="$(openssl rand -hex 32)"
+          export ADMIN_USER="admin-$(openssl rand -hex 4)"
+          export ADMIN_PASSWORD="$(openssl rand -hex 16)"
+          docker compose -f docker-compose.app.yml up -d
+
+      - name: DAST - wait for app
+        continue-on-error: true
+        run: npx wait-on http://localhost:8080 --timeout 60000
+
+      - name: DAST - ZAP baseline scan
+        continue-on-error: true
+        run: |
+          docker run --rm --network host \
+            -v "${{ github.workspace }}:/zap/wrk:rw" \
+            ghcr.io/zaproxy/zaproxy:2.15.0 \
+            zap-baseline.py -t http://localhost:8080 -x zap.xml -c devsecops/config/.zap/rules.tsv
+
+      - name: DAST - stop app (docker compose)
+        if: always()
+        run: docker rm -f sos-hardened || true
+
+      - name: Upload DAST report to DefectDojo
+        continue-on-error: true
+        run: python3 devsecops/scripts/upload_to_defectdojo.py --scan-type "ZAP Scan" --file zap.xml
+
+      # --- Artefactos: todos los informes generados ---
+      - name: Upload scan reports as artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: devsecops-reports
+          path: |
+            npm-audit.json
+            semgrep.json
+            trivy-config.json
+            trivy-image.json
+            zap.xml
+          if-no-files-found: warn
+          retention-days: 30
+
+      # --- Quality gate bloqueante (SCA): ultimo paso, hace fallar el pipeline ---
+      - name: Quality gate - npm audit (high/critical)
+        run: python3 devsecops/scripts/check_npm_gate.py npm-audit.json
