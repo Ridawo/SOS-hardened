@@ -1,9 +1,15 @@
 #!/usr/bin/env python3
-"""Sube un informe de seguridad a DefectDojo via la API import-scan.
+"""Sube un informe de seguridad a DefectDojo via la API reimport-scan.
 
 Uso:
     python3 -I devsecops/scripts/upload_to_defectdojo.py \
-        --scan-type "NPM Audit v7+ Scan" --file npm-audit.json
+        --scan-type "NPM Audit v7+ Scan" --file npm-audit.json \
+        --test-title "npm audit (SCA)"
+
+Cada herramienta tiene un test fijo dentro del engagement, identificado por su
+--test-title. En la primera ejecucion DefectDojo lo crea; en las siguientes
+compara el informe con el que ya hay: los hallazgos que siguen apareciendo no se
+duplican, los nuevos se crean y los que ya no aparecen se cierran (Mitigated).
 
 Pensado para correr dentro del pipeline (self-hosted runner en Kali). Usa SOLO
 la libreria estandar de Python (urllib): no requiere `pip install` ni
@@ -53,6 +59,8 @@ def build_fields(args):
         "product_name": args.product_name,
         "product_type_name": PRODUCT_TYPE_NAME,
         "engagement_name": args.engagement_name,
+        "test_title": args.test_title,
+        "close_old_findings": "true",
         "active": "true",
         "verified": "false",
         "minimum_severity": MINIMUM_SEVERITY,
@@ -112,11 +120,13 @@ def upload(url, api_key, fields, file_path):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(
-        description="Sube un informe de seguridad a DefectDojo (import-scan).")
+        description="Sube un informe de seguridad a DefectDojo (reimport-scan).")
     parser.add_argument("--scan-type", required=True,
                         help='Tipo DefectDojo, p.ej. "NPM Audit v7+ Scan".')
     parser.add_argument("--file", required=True,
                         help="Ruta del informe a subir.")
+    parser.add_argument("--test-title", required=True,
+                        help="Titulo del test; identifica el test donde se reimporta.")
     parser.add_argument("--product-name", default=PRODUCT_NAME)
     parser.add_argument("--engagement-name", default=ENGAGEMENT_NAME)
     args = parser.parse_args(argv)
@@ -132,7 +142,7 @@ def main(argv=None):
         return 2
 
     base_url = os.environ.get("DEFECTDOJO_URL", DEFAULT_URL).rstrip("/")
-    url = base_url + "/api/v2/import-scan/"
+    url = base_url + "/api/v2/reimport-scan/"
     fields = build_fields(args)
 
     print("[INFO] Subiendo '%s' como '%s' a %s"
