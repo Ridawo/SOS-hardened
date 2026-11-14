@@ -1,0 +1,16 @@
+# DefectDojo en local, escuchando en el puerto 8082.
+#
+# Este fichero NO define servicios propios. Incluye el docker-compose.yml oficial de
+# django-DefectDojo (que hay que clonar al lado, ver README.md) y solo cambia los puertos
+# publicados mediante defectdojo.env (DD_PORT / DD_TLS_PORT). Asi usamos las imagenes
+# oficiales sin copiar ni mantener su compose.
+#
+# Uso (desde este directorio):
+#   git clone --depth 1 https://github.com/DefectDojo/django-DefectDojo.git
+#   printf 'DD_PORT=8082\nDD_TLS_PORT=8444\n' > defectdojo.env
+#   docker compose up -d
+#
+# Requiere Docker Compose 2.20 o superior (por "include"). Con 2.40 esta probado.
+include:
+  - path: ./django-DefectDojo/docker-compose.yml
+    env_file: ./defectdojo.env
