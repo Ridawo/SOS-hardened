@@ -16,20 +16,20 @@ flowchart TD
     BUILD["Etapa 4: Build<br/>npm run build (Svelte)<br/>docker build sos-hardened:ci"]
     BUILD --> TRIVY
 
-    TRIVY["Etapa 5: Build: IaC y contenedor con Trivy 0.58.1<br/>trivy config e image, informe JSON<br/>GATE: AVISO, no detiene"]
+    TRIVY["Etapa 5: Build: IaC y contenedor con Trivy 0.58.1<br/>trivy config e image<br/>informes trivy-config.json y trivy-image.json<br/>GATE: AVISO, no detiene"]
     TRIVY --> DAST
 
-    DAST["Etapa 6: Pruebas: DAST con ZAP baseline 2.15.0<br/>app en contenedor, puerto 8080<br/>informe zap.xml<br/>GATE: AVISO, no detiene"]
+    DAST["Etapa 6: Pruebas: DAST con ZAP baseline 2.15.0<br/>app en contenedor, puerto 8080<br/>JWT_SECRET y credenciales de admin aleatorias (openssl)<br/>informe zap.xml<br/>GATE: AVISO, no detiene"]
     DAST --> ART
 
-    ART["Etapa 7: Evidencias<br/>upload-artifact de los .json y .xml"]
+    ART["Etapa 7: Evidencias y limpieza<br/>upload-artifact de los .json y .xml<br/>chown del workspace al usuario del runner"]
     ART --> GATE
 
     GATE["Etapa 8: QUALITY GATE FINAL: BLOQUEANTE<br/>check_npm_gate.py npm-audit.json<br/>umbral: high + critical mayor que 0"]
     GATE -->|"= 0"| OK(["Pipeline en verde"])
     GATE -->|"mayor que 0, exit 1"| KO(["Pipeline en rojo"])
 
-    DOJO[("DefectDojo, puerto 8082<br/>Product SOS-hardened PAI-4<br/>Engagement CI-CD<br/>deduplicacion y priorizacion")]
+    DOJO[("DefectDojo, puerto 8082<br/>Product type Research and Development<br/>Product SOS-hardened PAI-4<br/>Engagement CI-CD<br/>deduplicacion y priorizacion")]
 
     SCA -.->|"NPM Audit v7+ Scan"| DOJO
     SAST -.->|"Semgrep JSON Report"| DOJO

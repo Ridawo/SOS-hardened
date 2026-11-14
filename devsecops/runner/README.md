@@ -11,9 +11,12 @@ y con Docker del host.
 - Docker instalado y usable por el usuario que ejecuta el runner (`docker ps` sin sudo; si no,
   `sudo usermod -aG docker $USER` y volver a abrir sesion).
 - `git` y `curl`.
-- Node 20 y Python 3.12: los instalan `actions/setup-node` y `actions/setup-python` en el propio
-  workflow. Si `setup-python` falla en Kali (no es Ubuntu), instalar Python 3 en el sistema y
-  quitar o ajustar ese paso del workflow.
+- Node 20: lo instala `actions/setup-node` en el propio workflow. Python 3 hay que tenerlo en
+  el sistema del runner: los scripts del pipeline usan el `python3` de la maquina (solo
+  libreria estandar, sin `pip install`). No se usa `actions/setup-python`, que falla en Kali.
+- Para que el equipo no se suspenda mientras corre un pipeline, arrancar el runner con
+  `systemd-inhibit --what=sleep:idle:handle-lid-switch ./run.sh`. Si el portatil se suspende, el
+  trabajo en curso queda a medias y, al despertar, el runner puede seguir ejecutandolo.
 - Ver `docker compose version` y que DefectDojo este levantado
   (ver [../defectdojo/README.md](../defectdojo/README.md)).
 - Las imagenes de Semgrep, ZAP y Trivy se descargan solas la primera vez (algo de GB).
