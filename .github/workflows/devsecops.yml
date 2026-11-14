@@ -43,7 +43,7 @@ jobs:
 
       - name: Upload SCA report to DefectDojo
         continue-on-error: true
-        run: python3 devsecops/scripts/upload_to_defectdojo.py --scan-type "NPM Audit v7+ Scan" --file npm-audit.json
+        run: python3 devsecops/scripts/upload_to_defectdojo.py --scan-type "NPM Audit v7+ Scan" --file npm-audit.json --test-title "npm audit (SCA)"
 
       # --- SAST: Semgrep (docker, salida JSON) ---
       - name: SAST - Semgrep
@@ -52,11 +52,14 @@ jobs:
           docker run --rm \
             -v "${{ github.workspace }}:/src" -w /src \
             semgrep/semgrep:1.90.0 \
-            semgrep scan --config devsecops/config/semgrep.yml --json --output semgrep.json .
+            semgrep scan --metrics=off \
+              --config devsecops/config/semgrep.yml \
+              --config p/javascript --config p/nodejs --config p/expressjs --config p/security-audit \
+              --json --output semgrep.json .
 
       - name: Upload SAST report to DefectDojo
         continue-on-error: true
-        run: python3 devsecops/scripts/upload_to_defectdojo.py --scan-type "Semgrep JSON Report" --file semgrep.json
+        run: python3 devsecops/scripts/upload_to_defectdojo.py --scan-type "Semgrep JSON Report" --file semgrep.json --test-title "Semgrep (SAST)"
 
       # --- Build: frontend + imagen de la app ---
       - name: Build frontend
@@ -85,11 +88,11 @@ jobs:
 
       - name: Upload Trivy IaC report to DefectDojo
         continue-on-error: true
-        run: python3 devsecops/scripts/upload_to_defectdojo.py --scan-type "Trivy Scan" --file trivy-config.json
+        run: python3 devsecops/scripts/upload_to_defectdojo.py --scan-type "Trivy Scan" --file trivy-config.json --test-title "Trivy config (IaC)"
 
       - name: Upload Trivy image report to DefectDojo
         continue-on-error: true
-        run: python3 devsecops/scripts/upload_to_defectdojo.py --scan-type "Trivy Scan" --file trivy-image.json
+        run: python3 devsecops/scripts/upload_to_defectdojo.py --scan-type "Trivy Scan" --file trivy-image.json --test-title "Trivy image (contenedor)"
 
       # --- DAST: ZAP baseline contra la app levantada (docker, salida XML) ---
       # La app no arranca sin JWT_SECRET/ADMIN_USER/ADMIN_PASSWORD. Se generan
@@ -117,11 +120,13 @@ jobs:
 
       - name: DAST - stop app (docker compose)
         if: always()
-        run: docker rm -f sos-hardened || true
+        run: |
+          docker rm -f sos-hardened || true
+          docker network rm sos-hardened_default || true
 
       - name: Upload DAST report to DefectDojo
         continue-on-error: true
-        run: python3 devsecops/scripts/upload_to_defectdojo.py --scan-type "ZAP Scan" --file zap.xml
+        run: python3 devsecops/scripts/upload_to_defectdojo.py --scan-type "ZAP Scan" --file zap.xml --test-title "ZAP baseline (DAST)"
 
       # --- Artefactos: todos los informes generados ---
       - name: Upload scan reports as artifacts
