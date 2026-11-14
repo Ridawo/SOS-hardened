@@ -1,0 +1,46 @@
+%% Diagrama 1.a: pipeline DevSecOps de SOS-hardened (GitHub Actions, runner self-hosted)
+%% Fichero del pipeline: .github/workflows/devsecops.yml
+%% Amarillo = quality gate en modo AVISO, rojo = quality gate BLOQUEANTE
+flowchart TD
+    DEV["push o pull request<br/>GitHub Actions, runner self-hosted"] --> E1
+
+    E1["Etapa 1: Commit: preparacion<br/>checkout, setup-node 20, npm ci"]
+    E1 --> SCA
+
+    SCA["Etapa 2: Commit: SCA con npm audit<br/>informe npm-audit.json<br/>GATE: AVISO en la etapa<br/>se evalua al final"]
+    SCA --> SAST
+
+    SAST["Etapa 3: Commit: SAST con Semgrep 1.90.0<br/>informe semgrep.json<br/>GATE: AVISO, no detiene"]
+    SAST --> BUILD
+
+    BUILD["Etapa 4: Build<br/>npm run build (Svelte)<br/>docker build sos-hardened:ci"]
+    BUILD --> TRIVY
+
+    TRIVY["Etapa 5: Build: IaC y contenedor con Trivy 0.58.1<br/>trivy config e image, informe JSON<br/>GATE: AVISO, no detiene"]
+    TRIVY --> DAST
+
+    DAST["Etapa 6: Pruebas: DAST con ZAP baseline 2.15.0<br/>app en contenedor, puerto 8080<br/>informe zap.xml<br/>GATE: AVISO, no detiene"]
+    DAST --> ART
+
+    ART["Etapa 7: Evidencias<br/>upload-artifact de los .json y .xml"]
+    ART --> GATE
+
+    GATE["Etapa 8: QUALITY GATE FINAL: BLOQUEANTE<br/>check_npm_gate.py npm-audit.json<br/>umbral: high + critical mayor que 0"]
+    GATE -->|"= 0"| OK(["Pipeline en verde"])
+    GATE -->|"mayor que 0, exit 1"| KO(["Pipeline en rojo"])
+
+    DOJO[("DefectDojo, puerto 8082<br/>Product SOS-hardened PAI-4<br/>Engagement CI-CD<br/>deduplicacion y priorizacion")]
+
+    SCA -.->|"NPM Audit v7+ Scan"| DOJO
+    SAST -.->|"Semgrep JSON Report"| DOJO
+    TRIVY -.->|"Trivy Scan"| DOJO
+    DAST -.->|"ZAP Scan"| DOJO
+
+    classDef aviso fill:#fff3cd,stroke:#b58105,color:#000
+    classDef bloqueante fill:#f8d7da,stroke:#b02a37,color:#000
+    classDef ok fill:#d1e7dd,stroke:#2f7d4f,color:#000
+    classDef dojo fill:#e7f1ff,stroke:#2b5aa8,color:#000
+    class SCA,SAST,TRIVY,DAST aviso
+    class GATE,KO bloqueante
+    class OK ok
+    class DOJO dojo
