@@ -34,6 +34,9 @@ import uuid
 DEFAULT_URL = "http://localhost:8082"
 PRODUCT_NAME = "SOS-hardened (PAI-4)"
 ENGAGEMENT_NAME = "CI-CD"
+# Con auto_create_context DefectDojo exige un tipo de producto para crear el
+# producto la primera vez (si no, responde 400). Este ya existe por defecto.
+PRODUCT_TYPE_NAME = "Research and Development"
 MINIMUM_SEVERITY = "Info"
 TIMEOUT = 60  # segundos
 
@@ -48,6 +51,7 @@ def build_fields(args):
         "scan_type": args.scan_type,
         "auto_create_context": "true",
         "product_name": args.product_name,
+        "product_type_name": PRODUCT_TYPE_NAME,
         "engagement_name": args.engagement_name,
         "active": "true",
         "verified": "false",
