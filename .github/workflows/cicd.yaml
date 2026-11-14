@@ -1,5 +1,7 @@
 name: CI_CD
-on: [push, pull_request]
+# Pipeline original del proyecto SOS (sin pruebas de seguridad). Se conserva como
+# punto de partida de la PAI-4 y ya no se lanza solo: el pipeline activo es devsecops.yml
+on: workflow_dispatch
 jobs:
   test:
     runs-on: ubuntu-latest
