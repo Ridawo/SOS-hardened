@@ -1,0 +1,50 @@
+# ---------------------------------------------------------------------------
+# Configuracion de Trivy para SOS-hardened (PAI-4, IaC/contenedor)
+# ---------------------------------------------------------------------------
+# El workflow ejecuta Trivy en docker (aquasec/trivy:0.58.1) en dos pasos,
+# ambos apuntando a este fichero con --config devsecops/config/trivy.yaml:
+#
+#   1) trivy config .            -> escanea Dockerfile y ficheros IaC (misconfig)
+#   2) trivy image sos-hardened:ci  -> escanea la imagen construida (vuln+secret)
+#
+# El formato de salida y el fichero de salida los fija cada paso con --format
+# json --output <fichero> para subirlo a DefectDojo como "Trivy Scan". Aqui se
+# define un comportamiento comun. exit-code se deja en 0: Trivy es herramienta
+# de AVISO en este pipeline (el quality gate bloqueante es npm audit / SCA).
+# ---------------------------------------------------------------------------
+
+# Severidades que se reportan (se omiten UNKNOWN y bajas para reducir ruido).
+severity:
+  - MEDIUM
+  - HIGH
+  - CRITICAL
+
+# Formato por defecto (el workflow puede sobreescribirlo con --format).
+format: json
+
+# No romper el pipeline desde Trivy; es modo aviso.
+exit-code: 0
+
+# Escaneres activos: vulnerabilidades de dependencias/SO, malas
+# configuraciones (IaC/Dockerfile) y secretos embebidos.
+scan:
+  scanners:
+    - vuln
+    - misconfig
+    - secret
+
+# Vulnerabilidades: cubrir tanto paquetes del SO como librerias de la app.
+vulnerability:
+  type:
+    - os
+    - library
+
+# Malas configuraciones: incluir comprobaciones del Dockerfile.
+misconfiguration:
+  include-non-failures: false
+
+# Reducir ruido de rutas que no deben analizarse.
+skip-dirs:
+  - node_modules
+  - data
+  - "**/.git"
