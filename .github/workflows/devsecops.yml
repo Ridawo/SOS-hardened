@@ -138,6 +138,15 @@ jobs:
           if-no-files-found: warn
           retention-days: 30
 
+      # --- Limpieza: los contenedores de Semgrep/Trivy escriben como root en el
+      # workspace y en un runner propio eso rompe el checkout de la siguiente
+      # ejecucion. Se devuelven los ficheros al usuario del runner. ---
+      - name: Give workspace back to the runner user
+        if: always()
+        run: |
+          docker run --rm -v "${{ github.workspace }}:/w" --entrypoint chown \
+            semgrep/semgrep:1.90.0 -R "$(id -u):$(id -g)" /w || true
+
       # --- Quality gate bloqueante (SCA): ultimo paso, hace fallar el pipeline ---
       - name: Quality gate - npm audit (high/critical)
         run: python3 devsecops/scripts/check_npm_gate.py npm-audit.json
