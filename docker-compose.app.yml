@@ -1,0 +1,20 @@
+# Levanta la app SOS en local o en el pipeline (el DAST ataca http://localhost:8080).
+#   docker compose -f docker-compose.app.yml up -d --build
+#   docker compose -f docker-compose.app.yml down
+#
+# JWT_SECRET, ADMIN_USER y ADMIN_PASSWORD son obligatorias y no tienen valor por
+# defecto: en el pipeline las genera el workflow en cada ejecucion; en local salen
+# del entorno o de un fichero .env (que no se sube al repo).
+services:
+  sos:
+    image: sos-hardened:ci
+    build: .
+    container_name: sos-hardened
+    ports:
+      - "8080:8080"
+    environment:
+      PORT: "8080"
+      JWT_SECRET: ${JWT_SECRET:?define JWT_SECRET}
+      ADMIN_USER: ${ADMIN_USER:?define ADMIN_USER}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?define ADMIN_PASSWORD}
+    restart: "no"
