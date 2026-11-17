@@ -1,46 +1,72 @@
 %% Diagrama 1.a: pipeline DevSecOps de SOS-hardened (GitHub Actions, runner self-hosted)
-%% Fichero del pipeline: .github/workflows/devsecops.yml
-%% Amarillo = quality gate en modo AVISO, rojo = quality gate BLOQUEANTE
+%% Fichero del pipeline: .github/workflows/devsecops.yml (8 jobs)
+%% Amarillo = quality gate en modo AVISO, rojo = quality gate BLOQUEANTE, azul = DefectDojo
 flowchart TD
-    DEV["push o pull request<br/>GitHub Actions, runner self-hosted"] --> E1
+    DEV["push o pull request<br/>runs-on: self-hosted, linux<br/>concurrency: devsecops"]
 
-    E1["Etapa 1: Commit: preparacion<br/>checkout, setup-node 20, npm ci"]
-    E1 --> SCA
+    subgraph P["Fase 1: jobs que arrancan a la vez, sin needs"]
+        direction LR
+        subgraph J1["job sca"]
+            SCA["Etapa 2: SCA, npm audit<br/>informe npm-audit.json<br/>artefacto report-sca<br/>GATE: AVISO"]
+        end
+        subgraph J2["job sast"]
+            SAST["Etapa 3: SAST, Semgrep 1.90.0<br/>informe semgrep.json<br/>artefacto report-sast<br/>GATE: AVISO<br/>chown del workspace"]
+        end
+        subgraph J3["job iac"]
+            IAC["Etapa 5a: IaC, Trivy 0.58.1 config<br/>informe trivy-config.json<br/>artefacto report-iac<br/>GATE: AVISO<br/>chown del workspace"]
+        end
+        subgraph J4["job build"]
+            BUILD["Etapa 4: Build<br/>docker build sos-hardened:ci<br/>sin informe"]
+        end
+    end
 
-    SCA["Etapa 2: Commit: SCA con npm audit<br/>informe npm-audit.json<br/>GATE: AVISO en la etapa<br/>se evalua al final"]
-    SCA --> SAST
+    subgraph Q["Fase 2: needs build, en paralelo entre si"]
+        direction LR
+        subgraph J5["job container"]
+            CONT["Etapa 5b: Contenedor, Trivy image<br/>informe trivy-image.json<br/>artefacto report-container<br/>GATE: AVISO<br/>chown del workspace"]
+        end
+        subgraph J6["job dast"]
+            DAST["Etapa 6: DAST, ZAP baseline 2.15.0<br/>app en puerto 8080, secretos aleatorios<br/>informe zap.xml<br/>artefacto report-dast<br/>GATE: AVISO<br/>chown del workspace"]
+        end
+    end
 
-    SAST["Etapa 3: Commit: SAST con Semgrep 1.90.0<br/>informe semgrep.json<br/>GATE: AVISO, no detiene"]
-    SAST --> BUILD
+    subgraph J7["job evidencias: needs sca, sast, iac, container, dast; if always"]
+        EVI["Etapa 7: Evidencias<br/>descarga report-*<br/>un solo artefacto devsecops-reports, 30 dias"]
+    end
 
-    BUILD["Etapa 4: Build<br/>npm run build (Svelte)<br/>docker build sos-hardened:ci"]
-    BUILD --> TRIVY
+    subgraph J8["job gate: needs evidencias; if always"]
+        GATE["Etapa 8: QUALITY GATE FINAL, BLOQUEANTE<br/>check_npm_gate.py npm-audit.json<br/>umbral: high + critical mayor que 0"]
+    end
 
-    TRIVY["Etapa 5: Build: IaC y contenedor con Trivy 0.58.1<br/>trivy config e image<br/>informes trivy-config.json y trivy-image.json<br/>GATE: AVISO, no detiene"]
-    TRIVY --> DAST
-
-    DAST["Etapa 6: Pruebas: DAST con ZAP baseline 2.15.0<br/>app en contenedor, puerto 8080<br/>JWT_SECRET y credenciales de admin aleatorias (openssl)<br/>informe zap.xml<br/>GATE: AVISO, no detiene"]
-    DAST --> ART
-
-    ART["Etapa 7: Evidencias y limpieza<br/>upload-artifact de los .json y .xml<br/>chown del workspace al usuario del runner"]
-    ART --> GATE
-
-    GATE["Etapa 8: QUALITY GATE FINAL: BLOQUEANTE<br/>check_npm_gate.py npm-audit.json<br/>umbral: high + critical mayor que 0"]
-    GATE -->|"= 0"| OK(["Pipeline en verde"])
-    GATE -->|"mayor que 0, exit 1"| KO(["Pipeline en rojo"])
+    DEV --> P
+    P ~~~ Q
+    J4 --> J5
+    J4 --> J6
+    J1 --> J7
+    J2 --> J7
+    J3 --> J7
+    J5 --> J7
+    J6 --> J7
+    J7 --> J8
+    J8 -->|"= 0"| OK(["Pipeline en verde"])
+    J8 -->|"mayor que 0, exit 1"| KO(["Pipeline en rojo"])
 
     DOJO[("DefectDojo, puerto 8082<br/>Product type Research and Development<br/>Product SOS-hardened PAI-4<br/>Engagement CI-CD<br/>deduplicacion y priorizacion")]
 
-    SCA -.->|"NPM Audit v7+ Scan"| DOJO
-    SAST -.->|"Semgrep JSON Report"| DOJO
-    TRIVY -.->|"Trivy Scan"| DOJO
-    DAST -.->|"ZAP Scan"| DOJO
+    J1 -.->|"NPM Audit v7+ Scan"| DOJO
+    J2 -.->|"Semgrep JSON Report"| DOJO
+    J3 -.->|"Trivy Scan"| DOJO
+    J5 -.->|"Trivy Scan"| DOJO
+    J6 -.->|"ZAP Scan"| DOJO
 
     classDef aviso fill:#fff3cd,stroke:#b58105,color:#000
     classDef bloqueante fill:#f8d7da,stroke:#b02a37,color:#000
     classDef ok fill:#d1e7dd,stroke:#2f7d4f,color:#000
     classDef dojo fill:#e7f1ff,stroke:#2b5aa8,color:#000
-    class SCA,SAST,TRIVY,DAST aviso
+    classDef neutro fill:#f1f3f5,stroke:#6c757d,color:#000
+    class SCA,SAST,IAC,CONT,DAST aviso
     class GATE,KO bloqueante
     class OK ok
     class DOJO dojo
+    class BUILD,EVI,DEV neutro
+    linkStyle 12,13,14,15,16 stroke:#2b5aa8,stroke-width:2px,stroke-dasharray:6 4
