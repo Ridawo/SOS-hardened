@@ -22,17 +22,29 @@ vulnerabilidades altas o criticas.
 Semgrep, Trivy y ZAP se ejecutan como contenedores Docker con la version fijada. Sus reglas
 y exclusiones estan en [`config/`](config/).
 
-## Orden del pipeline
+## Jobs del pipeline
 
-1. Checkout, Node 20, instalacion de dependencias del backend y del frontend.
-2. SCA (`npm audit --json`) y subida a DefectDojo.
-3. SAST (Semgrep) y subida.
-4. Build del frontend y de la imagen Docker.
-5. Trivy sobre la configuracion (Dockerfile, compose) y sobre la imagen; subida.
-6. DAST: se levanta la app en un contenedor, ZAP baseline la ataca en el 8080, se para el
-   contenedor y se sube el informe.
-7. Se guardan los informes como artefactos del run.
-8. **Quality gate** (ultimo paso).
+El workflow tiene 8 jobs. Cuatro arrancan a la vez, dos dependen de `build` y los dos
+ultimos recogen y deciden. Diagrama en [`diagrams/pipeline.mmd`](diagrams/pipeline.mmd).
+
+| Job | Etapa | Que hace | `needs` | Artefacto |
+|---|---|---|---|---|
+| `sca` | 2 | npm audit y subida a DefectDojo | - | `report-sca` |
+| `sast` | 3 | Semgrep y subida | - | `report-sast` |
+| `iac` | 5a | Trivy config (Dockerfile, compose) y subida | - | `report-iac` |
+| `build` | 4 | `docker build -t sos-hardened:ci .` | - | ninguno |
+| `container` | 5b | Trivy image sobre `sos-hardened:ci` y subida | `build` | `report-container` |
+| `dast` | 6 | levanta la app, ZAP baseline en el 8080, la para y sube | `build` | `report-dast` |
+| `evidencias` | 7 | junta los `report-*` en `devsecops-reports` (30 dias) | `sca, sast, iac, container, dast` (`if: always()`) | `devsecops-reports` |
+| `gate` | 8 | `check_npm_gate.py npm-audit.json` (bloqueante) | `evidencias` (`if: always()`) | - |
+
+- Cada job hace su propio checkout, sube su informe a DefectDojo y lo guarda como artefacto.
+- Los jobs que usan contenedores como root (`sast`, `iac`, `container`, `dast`) terminan con
+  un paso `chown` del workspace al usuario del runner.
+- `concurrency: devsecops` evita dos ejecuciones a la vez: comparten el daemon Docker, la
+  imagen `sos-hardened:ci` y el puerto 8080.
+- Un runner ejecuta un solo job a la vez. Para que el paralelismo sea real hay que tener 4 runners
+  en la misma maquina (`kali-ridao` y `kali-ridao-2/3/4`) (ver [`runner/README.md`](runner/README.md)).
 
 ## Quality gate
 
@@ -40,7 +52,7 @@ El gate bloqueante es el SCA: `scripts/check_npm_gate.py npm-audit.json` suma la
 vulnerabilidades `high` y `critical` de `npm-audit.json` y sale con codigo 1 si hay alguna,
 con lo que el run queda en rojo.
 
-Se evalua **al final** y no justo despues del SCA para que Semgrep, Trivy y ZAP tambien se
+Es el job `gate`, que va **el ultimo** (`needs: evidencias`), y no justo despues del SCA para que Semgrep, Trivy y ZAP tambien se
 ejecuten y suban su informe en cada run. Si el gate cortara pronto, el DAST nunca se
 ejecutaria mientras haya dependencias vulnerables. El resto de herramientas van en modo aviso
 (`continue-on-error: true`): generan informe, pero no tumban el pipeline.

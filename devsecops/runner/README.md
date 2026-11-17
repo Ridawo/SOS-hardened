@@ -86,11 +86,63 @@ con `push` y `pull_request`) y mirar la pestana Actions. El job debe pasar de `Q
 `In progress` en unos segundos. Si se queda en `Queued` mucho rato, el runner esta
 apagado o las etiquetas no coinciden.
 
+## 5. Runners extra para los jobs en paralelo
+
+El workflow tiene jobs que pueden correr a la vez (`sca`, `sast`, `iac` y `build`, y luego
+`container` y `dast`: hasta 4 a la vez). Un runner ejecuta **un solo job a la vez**: con un unico runner los
+jobs paralelos se encolan uno detras de otro y no se gana tiempo. Por eso se registran tres
+instancias mas en la misma maquina, cada una en su propio directorio (no se pueden compartir,
+cada una guarda sus credenciales y su carpeta `_work`).
+
+Sacar un token nuevo en Settings -> Actions -> Runners -> New self-hosted runner por cada
+instancia (o reutilizar uno que no haya caducado) y usar los comandos que muestre GitHub:
+
+```bash
+# Instancia 2
+mkdir -p ~/actions-runner-2 && cd ~/actions-runner-2
+curl -o actions-runner-linux-x64-2.338.2.tar.gz -L \
+  https://github.com/actions/runner/releases/download/v2.338.2/actions-runner-linux-x64-2.338.2.tar.gz
+tar xzf ./actions-runner-linux-x64-2.338.2.tar.gz
+./config.sh --url https://github.com/Ridawo/SOS-hardened --token <TOKEN_DE_REGISTRO> \
+  --name kali-ridao-2 --labels self-hosted,linux --unattended
+
+# Instancia 3
+mkdir -p ~/actions-runner-3 && cd ~/actions-runner-3
+# (misma descarga y tar)
+./config.sh --url https://github.com/Ridawo/SOS-hardened --token <TOKEN_DE_REGISTRO> \
+  --name kali-ridao-3 --labels self-hosted,linux --unattended
+
+# Instancia 4
+mkdir -p ~/actions-runner-4 && cd ~/actions-runner-4
+# (misma descarga y tar)
+./config.sh --url https://github.com/Ridawo/SOS-hardened --token <TOKEN_DE_REGISTRO> \
+  --name kali-ridao-4 --labels self-hosted,linux --unattended
+```
+
+El label es el mismo que el del primer runner (`self-hosted,linux`), asi que GitHub reparte
+los jobs entre los cuatro. Lanzarlos cada uno en su terminal, evitando la suspension:
+
+```bash
+cd ~/actions-runner   && systemd-inhibit --what=sleep:idle:handle-lid-switch ./run.sh
+cd ~/actions-runner-2 && systemd-inhibit --what=sleep:idle:handle-lid-switch ./run.sh
+cd ~/actions-runner-3 && systemd-inhibit --what=sleep:idle:handle-lid-switch ./run.sh
+cd ~/actions-runner-4 && systemd-inhibit --what=sleep:idle:handle-lid-switch ./run.sh
+```
+
+Los cuatro aparecen como **Idle** en Settings -> Actions -> Runners. Para quitarlos:
+`./config.sh remove --token <TOKEN>` dentro de cada directorio.
+
+Recursos: la maquina tiene 15 GB de RAM utiles y 8 hilos. Cuatro runners con jobs que lanzan
+contenedores (Semgrep, Trivy, ZAP, el build de la imagen) a la vez pueden apretar la memoria;
+si se queda corta, dejar solo dos o tres. Los cuatro comparten el mismo daemon Docker, el puerto 8080
+y la imagen `sos-hardened:ci`, y el workflow ya impide dos ejecuciones simultaneas con
+`concurrency`.
+
 ## Que tiene que estar encendido
 
 Durante cada ejecucion del pipeline tienen que estar a la vez:
 
-1. El runner (`./run.sh` o el servicio).
+1. Los runners (`./run.sh` o el servicio): al menos uno, mejor los cuatro.
 2. DefectDojo en el puerto 8082 (`docker compose ps` en `devsecops/defectdojo`).
 3. Docker funcionando, y el puerto 8080 libre (el DAST levanta la app ahi).
 
