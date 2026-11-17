@@ -57,10 +57,40 @@ rules:
       cwe: "CWE-78: OS Command Injection"
       owasp: "A03:2021 - Injection"
     pattern-either:
-      - pattern: exec(...)
-      - pattern: execSync(...)
-      - pattern: $CP.exec(...)
-      - pattern: $CP.execSync(...)
+      # Solo funciones de child_process (con o sin alias); no casa con el
+      # .exec() de NeDB (db.find(...).exec(cb)) ni con RegExp.exec().
+      - pattern: require("child_process").exec(...)
+      - pattern: require("child_process").execSync(...)
+      - pattern: child_process.exec(...)
+      - pattern: child_process.execSync(...)
+      - pattern: 'child_process.spawn($CMD, $ARGS, {..., shell: true, ...})'
+      - pattern: 'child_process.spawn($CMD, {..., shell: true, ...})'
+      - pattern: 'child_process.spawnSync($CMD, $ARGS, {..., shell: true, ...})'
+      - pattern: 'child_process.spawnSync($CMD, {..., shell: true, ...})'
+      - patterns:
+          - pattern-either:
+              - pattern: $CP.exec(...)
+              - pattern: $CP.execSync(...)
+          - pattern-inside: |
+              import $CP from "child_process"
+              ...
+      - patterns:
+          - pattern-either:
+              - pattern: exec(...)
+              - pattern: execSync(...)
+          - pattern-either:
+              - pattern-inside: |
+                  import {..., exec, ...} from "child_process"
+                  ...
+              - pattern-inside: |
+                  import {..., execSync, ...} from "child_process"
+                  ...
+              - pattern-inside: |
+                  const {..., exec, ...} = require("child_process")
+                  ...
+              - pattern-inside: |
+                  const {..., execSync, ...} = require("child_process")
+                  ...
 
   - id: jwt-none-algorithm
     languages: [javascript, typescript]
