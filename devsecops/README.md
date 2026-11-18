@@ -36,7 +36,7 @@ ultimos recogen y deciden. Diagrama en [`diagrams/pipeline.mmd`](diagrams/pipeli
 | `container` | 5b | Trivy image sobre `sos-hardened:ci` y subida | `build` | `report-container` |
 | `dast` | 6 | levanta la app, ZAP baseline en el 8080, la para y sube | `build` | `report-dast` |
 | `evidencias` | 7 | junta los `report-*` en `devsecops-reports` (30 dias) | `sca, sast, iac, container, dast` (`if: always()`) | `devsecops-reports` |
-| `gate` | 8 | `check_npm_gate.py npm-audit.json` (bloqueante) | `evidencias` (`if: always()`) | - |
+| `gate` | 8 | `check_npm_gate.py npm-audit.json` (bloqueante) | `sca, sast, iac, container, dast` (`if: always()`) | - |
 
 - Cada job hace su propio checkout, sube su informe a DefectDojo y lo guarda como artefacto.
 - Los jobs que usan contenedores como root (`sast`, `iac`, `container`, `dast`) terminan con
@@ -52,7 +52,8 @@ El gate bloqueante es el SCA: `scripts/check_npm_gate.py npm-audit.json` suma la
 vulnerabilidades `high` y `critical` de `npm-audit.json` y sale con codigo 1 si hay alguna,
 con lo que el run queda en rojo.
 
-Es el job `gate`, que va **el ultimo** (`needs: evidencias`), y no justo despues del SCA para que Semgrep, Trivy y ZAP tambien se
+Es el job `gate`, que espera a **todas las herramientas** (`needs: sca, sast, iac, container, dast`,
+en paralelo con `evidencias`), y no va justo despues del SCA para que Semgrep, Trivy y ZAP tambien se
 ejecuten y suban su informe en cada run. Si el gate cortara pronto, el DAST nunca se
 ejecutaria mientras haya dependencias vulnerables. El resto de herramientas van en modo aviso
 (`continue-on-error: true`): generan informe, pero no tumban el pipeline.

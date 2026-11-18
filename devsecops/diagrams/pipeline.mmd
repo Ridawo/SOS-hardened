@@ -23,18 +23,18 @@ flowchart TD
     subgraph Q["Fase 2: needs build, en paralelo entre si"]
         direction LR
         subgraph J5["job container"]
-            CONT["Etapa 5b: Contenedor, Trivy image<br/>informe trivy-image.json<br/>artefacto report-container<br/>GATE: AVISO<br/>chown del workspace"]
+            CONT["Etapa 5b: Contenedor, Trivy image<br/>informe trivy-image.json<br/>artefacto report-container<br/>BD de CVE en volumen trivy-cache<br/>GATE: AVISO<br/>chown del workspace"]
         end
         subgraph J6["job dast"]
             DAST["Etapa 6: DAST, ZAP baseline 2.15.0<br/>app en puerto 8080, secretos aleatorios<br/>informe zap.xml<br/>artefacto report-dast<br/>GATE: AVISO<br/>chown del workspace"]
         end
     end
 
-    subgraph J7["job evidencias: needs sca, sast, iac, container, dast; if always"]
+    subgraph J7["job evidencias"]
         EVI["Etapa 7: Evidencias<br/>descarga report-*<br/>un solo artefacto devsecops-reports, 30 dias"]
     end
 
-    subgraph J8["job gate: needs evidencias; if always"]
+    subgraph J8["job gate, en paralelo con evidencias"]
         GATE["Etapa 8: QUALITY GATE FINAL, BLOQUEANTE<br/>check_npm_gate.py npm-audit.json<br/>umbral: high + critical mayor que 0"]
     end
 
@@ -42,12 +42,14 @@ flowchart TD
     P ~~~ Q
     J4 --> J5
     J4 --> J6
-    J1 --> J7
-    J2 --> J7
-    J3 --> J7
-    J5 --> J7
-    J6 --> J7
-    J7 --> J8
+    FIN{{"needs: sca, sast, iac, container, dast<br/>if: always, aunque alguno falle"}}
+    J1 --> FIN
+    J2 --> FIN
+    J3 --> FIN
+    J5 --> FIN
+    J6 --> FIN
+    FIN --> J7
+    FIN --> J8
     J8 -->|"= 0"| OK(["Pipeline en verde"])
     J8 -->|"mayor que 0, exit 1"| KO(["Pipeline en rojo"])
 
@@ -68,5 +70,5 @@ flowchart TD
     class GATE,KO bloqueante
     class OK ok
     class DOJO dojo
-    class BUILD,EVI,DEV neutro
-    linkStyle 12,13,14,15,16 stroke:#2b5aa8,stroke-width:2px,stroke-dasharray:6 4
+    class BUILD,EVI,DEV,FIN neutro
+    linkStyle 13,14,15,16,17 stroke:#2b5aa8,stroke-width:2px,stroke-dasharray:6 4
