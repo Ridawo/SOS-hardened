@@ -5,7 +5,7 @@ flowchart TD
         A["Una herramienta detecta una vulnerabilidad<br/>npm audit, Semgrep, Trivy o ZAP"] --> B["El pipeline sube el informe a DefectDojo por API<br/>DefectDojo crea el hallazgo y deduplica"]
         B --> D{"Es SCA (npm audit)<br/>y high o critical?<br/>(umbral del gate)"}
         D -- "No" --> E["Etapa en modo AVISO<br/>el pipeline CONTINUA<br/>queda en el log y en los artefactos"]
-        D -- "Si" --> H["El pipeline continua hasta el final<br/>y el gate final lo evalua<br/>BLOQUEANTE: SE DETIENE en rojo<br/>avisa GitHub Actions al autor y al equipo"]
+        D -- "Si" --> H["El pipeline continua hasta el final<br/>y el gate final lo evalua<br/>BLOQUEANTE: el run queda en rojo<br/>X en el commit y en el pull request<br/>GitHub avisa a quien lanzo el run<br/>segun su configuracion de notificaciones"]
     end
 
     subgraph TRI["Triaje"]
