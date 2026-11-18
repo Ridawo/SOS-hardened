@@ -1,4 +1,4 @@
-import Datastore from "nedb";
+import Datastore from "@seald-io/nedb";
 
 // Instancias únicas por archivo de DB.
 // Importar siempre desde aquí para evitar que dos módulos

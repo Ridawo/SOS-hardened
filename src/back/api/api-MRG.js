@@ -1,4 +1,4 @@
-import Datastore from "nedb";
+import Datastore from "@seald-io/nedb";
 import { verifyToken, stringFilter } from "./security.js";
 
 export const BASE_URL_API_MRG = "/api/v1/alcohol-consumptions-per-capita";

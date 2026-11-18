@@ -1,4 +1,4 @@
-import Datastore from "nedb";
+import Datastore from "@seald-io/nedb";
 import { verifyToken, stringFilter } from "./security.js";
 
 export const BASE_URL_API_JFM = "/api/v1/road-fatalities";
