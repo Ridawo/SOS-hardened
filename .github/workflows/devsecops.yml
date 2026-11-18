@@ -165,11 +165,15 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      # La base de datos de CVE se guarda en el volumen trivy-cache para no bajarla en
+      # cada ejecucion. Solo lo usa este job y concurrency impide dos runs a la vez,
+      # asi que nunca hay dos Trivy usando la cache al mismo tiempo.
       - name: Trivy - image scan
         continue-on-error: true
         run: |
           docker run --rm \
             -v /var/run/docker.sock:/var/run/docker.sock \
+            -v trivy-cache:/root/.cache/trivy \
             -v "${{ github.workspace }}:/workspace" -w /workspace \
             aquasec/trivy:0.58.1 \
             image --config devsecops/config/trivy.yaml --format json --output trivy-image.json sos-hardened:ci
@@ -290,11 +294,12 @@ jobs:
           retention-days: 30
 
   # ------------------------------------------------ Quality gate (etapa 8)
-  # Bloqueante. Va el ultimo para que todas las herramientas hayan corrido y subido
-  # su informe antes de que el pipeline falle.
+  # Bloqueante. Espera a todas las herramientas para que hayan corrido y subido su
+  # informe antes de que el pipeline falle. No espera a evidencias: solo necesita
+  # report-sca, asi que corre en paralelo con ese job.
   gate:
     name: Quality gate - npm audit (high/critical)
-    needs: evidencias
+    needs: [sca, sast, iac, container, dast]
     if: always()
     runs-on: [self-hosted, linux]
     steps:
