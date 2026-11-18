@@ -1,0 +1,39 @@
+%% Diagrama 1.b: flujo ante una vulnerabilidad detectada por el pipeline de SOS-hardened
+flowchart TD
+    subgraph DET["Deteccion"]
+        direction LR
+        A["Una herramienta detecta una vulnerabilidad<br/>npm audit, Semgrep, Trivy o ZAP"] --> B["El pipeline sube el informe a DefectDojo por API<br/>DefectDojo crea el hallazgo y deduplica"]
+        B --> D{"Es SCA (npm audit)<br/>y high o critical?<br/>(umbral del gate)"}
+        D -- "No" --> E["Etapa en modo AVISO<br/>el pipeline CONTINUA<br/>queda en el log y en los artefactos"]
+        D -- "Si" --> H["El pipeline continua hasta el final<br/>y el gate final lo evalua<br/>BLOQUEANTE: el run queda en rojo<br/>X en el commit y en el pull request<br/>GitHub avisa a quien lanzo el run<br/>segun su configuracion de notificaciones"]
+    end
+
+    subgraph TRI["Triaje"]
+        direction LR
+        K["Triaje en DefectDojo por el Security Team"] --> L{"Es falso positivo<br/>o riesgo aceptable?"}
+        L -- "Falso positivo" --> M["Se marca False Positive con justificacion<br/>no vuelve a abrirse en los siguientes imports"]
+        L -- "Riesgo aceptado" --> N["Se marca Risk Accepted<br/>con motivo y fecha de revision"]
+        L -- "No: real" --> O["Hallazgo Active<br/>se asigna prioridad y responsable"]
+    end
+
+    subgraph COR["Correccion"]
+        direction LR
+        P["El desarrollador corrige<br/>dependencia o codigo, en una rama con pull request"] --> Q["Se relanza el pipeline completo"]
+        Q --> R{"Sigue apareciendo<br/>en el nuevo informe?"}
+        R -- "No" --> S["DefectDojo lo marca Mitigated<br/>al reimportar el informe"]
+    end
+
+    DET --> TRI
+    TRI -->|"No: real"| COR
+    COR -->|"Si: sigue apareciendo, nuevo triaje"| TRI
+    TRI -->|"Falso positivo o riesgo aceptado"| Z(["Resuelta o gestionada"])
+    COR -->|"No: Mitigated"| Z
+
+    classDef decision fill:#fff3cd,stroke:#b58105,color:#000
+    classDef stop fill:#f8d7da,stroke:#b02a37,color:#000
+    classDef go fill:#d1e7dd,stroke:#2f7d4f,color:#000
+    classDef dojo fill:#e7f1ff,stroke:#2b5aa8,color:#000
+    class D,L,R decision
+    class H stop
+    class E,Z go
+    class B,K,M,N,O,S dojo

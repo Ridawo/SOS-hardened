@@ -1,0 +1,133 @@
+# ---------------------------------------------------------------------------
+# Configuracion de Semgrep para SOS-hardened (PAI-4, SAST)
+# ---------------------------------------------------------------------------
+# App objetivo: backend Node.js / Express 5 (src/back), frontend Svelte
+# (src/front). Dependencias: express, jsonwebtoken, cors, body-parser, nedb.
+#
+# COMO SE USA EN EL PIPELINE
+#   El workflow ejecuta Semgrep en docker (semgrep/semgrep:1.90.0) con salida
+#   JSON para subirla a DefectDojo como "Semgrep JSON Report". Semgrep admite
+#   varios --config, asi que la invocacion recomendada combina los rulesets
+#   oficiales del registry con estas reglas locales:
+#
+#     semgrep --json --output semgrep.json \
+#       --config p/security-audit \
+#       --config p/javascript \
+#       --config p/nodejs \
+#       --config p/expressjs \
+#       --config devsecops/config/semgrep.yml \
+#       src/
+#
+#   Los p/... cubren el grueso de CWE conocidas para JS/Node/Express (inyeccion,
+#   XSS, deserializacion, secretos, etc.). Si no hubiera red hacia el registry,
+#   este fichero por si solo (--config devsecops/config/semgrep.yml) ya es una
+#   config valida y aporta las reglas de abajo, centradas en los patrones mas
+#   relevantes de esta app.
+#
+# QUE CUBREN LAS REGLAS LOCALES
+#   - Ejecucion dinamica de codigo (eval / new Function).
+#   - Ejecucion de comandos del SO (child_process exec/execSync).
+#   - Uso inseguro de JWT (algoritmo "none" y secreto embebido en el codigo).
+#   - CORS totalmente abierto (Access-Control-Allow-Origin: *).
+# ---------------------------------------------------------------------------
+rules:
+  - id: node-eval-usage
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: >-
+      Uso de eval()/Function(): permite ejecutar codigo arbitrario. Evitalo o
+      valida y acota estrictamente la entrada.
+    metadata:
+      category: security
+      cwe: "CWE-95: Improper Neutralization of Directives in Dynamically Evaluated Code"
+      owasp: "A03:2021 - Injection"
+    pattern-either:
+      - pattern: eval(...)
+      - pattern: new Function(...)
+
+  - id: node-child-process-exec
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: >-
+      Ejecucion de comandos del sistema con exec/execSync: riesgo de inyeccion
+      de comandos si la cadena incluye entrada del usuario. Usa execFile/spawn
+      con argumentos separados.
+    metadata:
+      category: security
+      cwe: "CWE-78: OS Command Injection"
+      owasp: "A03:2021 - Injection"
+    pattern-either:
+      # Solo funciones de child_process (con o sin alias); no casa con el
+      # .exec() de NeDB (db.find(...).exec(cb)) ni con RegExp.exec().
+      - pattern: require("child_process").exec(...)
+      - pattern: require("child_process").execSync(...)
+      - pattern: child_process.exec(...)
+      - pattern: child_process.execSync(...)
+      - pattern: 'child_process.spawn($CMD, $ARGS, {..., shell: true, ...})'
+      - pattern: 'child_process.spawn($CMD, {..., shell: true, ...})'
+      - pattern: 'child_process.spawnSync($CMD, $ARGS, {..., shell: true, ...})'
+      - pattern: 'child_process.spawnSync($CMD, {..., shell: true, ...})'
+      - patterns:
+          - pattern-either:
+              - pattern: $CP.exec(...)
+              - pattern: $CP.execSync(...)
+          - pattern-inside: |
+              import $CP from "child_process"
+              ...
+      - patterns:
+          - pattern-either:
+              - pattern: exec(...)
+              - pattern: execSync(...)
+          - pattern-either:
+              - pattern-inside: |
+                  import {..., exec, ...} from "child_process"
+                  ...
+              - pattern-inside: |
+                  import {..., execSync, ...} from "child_process"
+                  ...
+              - pattern-inside: |
+                  const {..., exec, ...} = require("child_process")
+                  ...
+              - pattern-inside: |
+                  const {..., execSync, ...} = require("child_process")
+                  ...
+
+  - id: jwt-none-algorithm
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: >-
+      JWT con algoritmo "none" o verificacion que lo acepta: permite forjar
+      tokens sin firma. Fuerza un algoritmo seguro (p.ej. HS256/RS256).
+    metadata:
+      category: security
+      cwe: "CWE-347: Improper Verification of Cryptographic Signature"
+    pattern-either:
+      - pattern: 'jwt.sign($P, $S, {..., algorithm: "none", ...})'
+      - pattern: 'jwt.verify($T, $S, {..., algorithms: ["none"], ...})'
+
+  - id: jwt-hardcoded-secret
+    languages: [javascript, typescript]
+    severity: WARNING
+    message: >-
+      Secreto de JWT embebido en el codigo. Cargalo desde una variable de
+      entorno o un gestor de secretos, nunca en el repositorio.
+    metadata:
+      category: security
+      cwe: "CWE-798: Use of Hard-coded Credentials"
+    pattern-either:
+      - pattern: jwt.sign($P, "...", ...)
+      - pattern: jwt.verify($T, "...", ...)
+
+  - id: express-cors-wildcard
+    languages: [javascript, typescript]
+    severity: WARNING
+    message: >-
+      CORS totalmente abierto (origin "*"): cualquier sitio puede llamar a la
+      API. Restringe a los origenes permitidos.
+    metadata:
+      category: security
+      cwe: "CWE-942: Permissive Cross-domain Policy with Untrusted Domains"
+    pattern-either:
+      - pattern: 'cors({..., origin: "*", ...})'
+      - pattern: '$RES.header("Access-Control-Allow-Origin", "*")'
+      - pattern: '$RES.setHeader("Access-Control-Allow-Origin", "*")'

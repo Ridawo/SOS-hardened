@@ -1,0 +1,37 @@
+node_modules
+**/node_modules
+.git
+.github
+.gitignore
+
+# Secretos y configuracion local
+.env
+.env.*
+!.env.example
+
+# Datos generados en ejecucion y salidas de herramientas
+data
+reports
+coverage
+.nyc_output
+*.log
+npm-audit.json
+semgrep.json
+trivy-*.json
+zap.xml
+zap*.json
+
+# Build del front (se regenera dentro de la imagen) y caches
+src/front/svelte-app/build
+src/front/svelte-app/.svelte-kit
+.svelte-kit
+
+# Tests, pipeline y utilidades que no hacen falta en la imagen
+test-results
+playwright-report
+.claude
+.playwright-mcp
+devsecops
+efforts
+Dockerfile
+docker-compose*.yml
