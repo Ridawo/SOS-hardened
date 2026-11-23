@@ -17,10 +17,12 @@ actions/setup-python, basta el python3 del sistema.
 
 Diseno robusto:
 - Si DefectDojo no responde (esta caido, timeout, red), NO rompe el pipeline:
-  imprime un warning y sale con codigo 0. Subir el informe es un paso de aviso,
-  no el quality gate (ese es check_npm_gate.py).
+  sale con codigo 0. Subir el informe es un paso de aviso, no el quality gate
+  (ese es check_npm_gate.py).
 - Si la API responde con error (credenciales, parseo del informe...), imprime
   el cuerpo de la respuesta para poder depurar y sale != 0.
+- En los dos casos deja una anotacion ::warning:: de GitHub Actions, para que
+  una subida fallida se vea en el resumen del run y no pase desapercibida.
 
 Variables de entorno:
 - DEFECTDOJO_URL      (por defecto http://localhost:8082)
@@ -49,6 +51,14 @@ TIMEOUT = 60  # segundos
 
 def eprint(*args):
     print(*args, file=sys.stderr)
+
+
+def annotate(message):
+    """Anotacion de aviso visible en el resumen del run de GitHub Actions.
+
+    Se escapan %, CR y LF para que el texto no pueda inyectar otro comando."""
+    safe = message.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+    print("::warning title=DefectDojo::" + safe)
 
 
 def build_fields(args):
@@ -150,15 +160,12 @@ def main(argv=None):
 
     try:
         status, text = upload(url, api_key, fields, args.file)
-    except urllib.error.URLError as err:
-        # Sin conexion / DNS / timeout: no rompemos el pipeline.
-        eprint("[WARN] DefectDojo no responde (%s). Se omite la subida y el "
-               "pipeline continua." % err.reason)
-        return 0
-    except OSError as err:
-        # socket.timeout y similares heredan de OSError.
-        eprint("[WARN] DefectDojo no responde (%s). Se omite la subida y el "
-               "pipeline continua." % err)
+    except (urllib.error.URLError, OSError) as err:
+        # Sin conexion / DNS / timeout (socket.timeout hereda de OSError):
+        # no rompemos el pipeline, pero queda el aviso en el run.
+        reason = getattr(err, "reason", err)
+        annotate("No se pudo subir %s: DefectDojo no responde (%s)."
+                 % (args.file, reason))
         return 0
 
     body_preview = text if len(text) <= 4000 else text[:4000] + "...(truncado)"
@@ -167,6 +174,7 @@ def main(argv=None):
         print(body_preview)
         return 0
 
+    annotate("No se pudo subir %s: la API devolvio HTTP %s." % (args.file, status))
     eprint("[ERROR] La API devolvio HTTP %s" % status)
     eprint(body_preview)
     return 1
