@@ -1,13 +1,18 @@
 # Pipeline DevSecOps (PAI-4, SSII) para SOS-hardened.
 # Integra 4 herramientas de seguridad (SCA, SAST, DAST, IaC/contenedor) repartidas en
-# jobs independientes que se ejecutan en paralelo, sube cada informe a DefectDojo y
-# aplica un quality gate bloqueante sobre el SCA en el ultimo job.
+# jobs independientes que se ejecutan en paralelo, sube cada informe a DefectDojo,
+# avisa (anotacion ::warning::) cuando una herramienta supera su umbral, aplica un
+# quality gate bloqueante sobre el SCA y solo entrega la imagen si el gate pasa.
 #
 #   sca ----------------------------------------\
-#   sast ---------------------------------------+
-#   iac  ---------------------------------------+--> evidencias --> gate
-#   build --> container (Trivy image) ----------+
+#   sast ---------------------------------------+--> evidencias --\
+#   iac  ---------------------------------------+                  +--> release
+#   build --> container (Trivy image) ----------+--> gate ---------/
 #         \-> dast (ZAP baseline) --------------/
+#
+# Las acciones se fijan por el SHA del commit de su version y las imagenes de las
+# herramientas por su digest (cadena de suministro: una etiqueta como v4 o 0.58.1 se
+# puede mover, un SHA o un digest no). La etiqueta se deja al lado como referencia.
 #
 # El workflow original sin seguridad (cicd.yaml) se conserva como referencia historica.
 name: DevSecOps
@@ -26,8 +31,9 @@ concurrency:
 
 env:
   # DefectDojo en localhost:8082 (8081 estaba ocupado por otro contenedor).
+  # La clave de la API NO va aqui: se pasa solo a los pasos que suben informes, para
+  # que no la vean npm ci ni las herramientas.
   DEFECTDOJO_URL: http://localhost:8082
-  DEFECTDOJO_API_KEY: ${{ secrets.DEFECTDOJO_API_KEY }}
 
 jobs:
   # ---------------------------------------------------------------- SCA
@@ -36,16 +42,20 @@ jobs:
     runs-on: [self-hosted, linux]
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020  # v4.4.0
         with:
           node-version: '20'
           cache: 'npm'
 
+      # Solo npm ci: instala exactamente lo del package-lock.json. Un "|| npm install"
+      # podria resolver otras versiones justo en la etapa que audita dependencias.
+      # --ignore-scripts: para auditar no hace falta ejecutar los scripts de instalacion
+      # de las dependencias, que serian codigo de terceros corriendo en el runner.
       - name: Install dependencies (backend)
-        run: npm ci || npm install
+        run: npm ci --ignore-scripts
 
       - name: SCA - npm audit
         continue-on-error: true
@@ -55,11 +65,13 @@ jobs:
       # descarga binarios para Ubuntu y suele fallar en Kali. Los scripts solo usan stdlib.
       - name: Upload SCA report to DefectDojo
         continue-on-error: true
+        env:
+          DEFECTDOJO_API_KEY: ${{ secrets.DEFECTDOJO_API_KEY }}
         run: python3 devsecops/scripts/upload_to_defectdojo.py --scan-type "NPM Audit v7+ Scan" --file npm-audit.json --test-title "npm audit (SCA)"
 
       - name: Save report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
         with:
           name: report-sca
           path: npm-audit.json
@@ -72,14 +84,14 @@ jobs:
     runs-on: [self-hosted, linux]
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
 
       - name: SAST - Semgrep
         continue-on-error: true
         run: |
           docker run --rm \
             -v "${{ github.workspace }}:/src" -w /src \
-            semgrep/semgrep:1.90.0 \
+            semgrep/semgrep:1.90.0@sha256:7b625711ba9b6d1a543e308967b18c01b59932490a5536a06422666474bf6ee4 \
             semgrep scan --metrics=off \
               --config devsecops/config/semgrep.yml \
               --config p/javascript --config p/nodejs --config p/expressjs --config p/security-audit \
@@ -87,11 +99,17 @@ jobs:
 
       - name: Upload SAST report to DefectDojo
         continue-on-error: true
+        env:
+          DEFECTDOJO_API_KEY: ${{ secrets.DEFECTDOJO_API_KEY }}
         run: python3 devsecops/scripts/upload_to_defectdojo.py --scan-type "Semgrep JSON Report" --file semgrep.json --test-title "Semgrep (SAST)"
+
+      - name: Aviso - umbral Semgrep (WARNING o ERROR)
+        if: always()
+        run: python3 devsecops/scripts/check_aviso.py --tool semgrep --file semgrep.json
 
       - name: Save report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
         with:
           name: report-sast
           path: semgrep.json
@@ -104,7 +122,7 @@ jobs:
         if: always()
         run: |
           docker run --rm -v "${{ github.workspace }}:/w" --entrypoint chown \
-            semgrep/semgrep:1.90.0 -R "$(id -u):$(id -g)" /w || true
+            semgrep/semgrep:1.90.0@sha256:7b625711ba9b6d1a543e308967b18c01b59932490a5536a06422666474bf6ee4 -R "$(id -u):$(id -g)" /w || true
 
   # ---------------------------------------------------------- IaC (Trivy)
   iac:
@@ -112,23 +130,29 @@ jobs:
     runs-on: [self-hosted, linux]
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
 
       - name: Trivy - IaC config scan
         continue-on-error: true
         run: |
           docker run --rm \
             -v "${{ github.workspace }}:/workspace" -w /workspace \
-            aquasec/trivy:0.58.1 \
+            aquasec/trivy:0.58.1@sha256:ab70a02200597efa04748f210f793936eb647cbcdb0ea69cc30b226d6f5a22c7 \
             config --config devsecops/config/trivy.yaml --format json --output trivy-config.json .
 
       - name: Upload Trivy IaC report to DefectDojo
         continue-on-error: true
+        env:
+          DEFECTDOJO_API_KEY: ${{ secrets.DEFECTDOJO_API_KEY }}
         run: python3 devsecops/scripts/upload_to_defectdojo.py --scan-type "Trivy Scan" --file trivy-config.json --test-title "Trivy config (IaC)"
+
+      - name: Aviso - umbral Trivy config (HIGH o CRITICAL)
+        if: always()
+        run: python3 devsecops/scripts/check_aviso.py --tool trivy-config --file trivy-config.json
 
       - name: Save report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
         with:
           name: report-iac
           path: trivy-config.json
@@ -139,7 +163,7 @@ jobs:
         if: always()
         run: |
           docker run --rm -v "${{ github.workspace }}:/w" --entrypoint chown \
-            semgrep/semgrep:1.90.0 -R "$(id -u):$(id -g)" /w || true
+            semgrep/semgrep:1.90.0@sha256:7b625711ba9b6d1a543e308967b18c01b59932490a5536a06422666474bf6ee4 -R "$(id -u):$(id -g)" /w || true
 
   # ---------------------------------------------------------------- Build
   # Construye la imagen una sola vez. Los jobs container y dast la usan: al correr
@@ -149,7 +173,7 @@ jobs:
     runs-on: [self-hosted, linux]
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
 
       # El Dockerfile ya compila el frontend (npm run build), por eso no hay un
       # paso aparte para ello.
@@ -163,11 +187,14 @@ jobs:
     runs-on: [self-hosted, linux]
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
 
       # La base de datos de CVE se guarda en el volumen trivy-cache para no bajarla en
       # cada ejecucion. Solo lo usa este job y concurrency impide dos runs a la vez,
       # asi que nunca hay dos Trivy usando la cache al mismo tiempo.
+      # Montar el socket de Docker da a Trivy el mismo acceso que ya tiene el usuario
+      # del runner (esta en el grupo docker para lanzar todas las herramientas), no
+      # uno nuevo; por eso el runner va en una maquina dedicada a la practica.
       - name: Trivy - image scan
         continue-on-error: true
         run: |
@@ -175,16 +202,22 @@ jobs:
             -v /var/run/docker.sock:/var/run/docker.sock \
             -v trivy-cache:/root/.cache/trivy \
             -v "${{ github.workspace }}:/workspace" -w /workspace \
-            aquasec/trivy:0.58.1 \
+            aquasec/trivy:0.58.1@sha256:ab70a02200597efa04748f210f793936eb647cbcdb0ea69cc30b226d6f5a22c7 \
             image --config devsecops/config/trivy.yaml --format json --output trivy-image.json sos-hardened:ci
 
       - name: Upload Trivy image report to DefectDojo
         continue-on-error: true
+        env:
+          DEFECTDOJO_API_KEY: ${{ secrets.DEFECTDOJO_API_KEY }}
         run: python3 devsecops/scripts/upload_to_defectdojo.py --scan-type "Trivy Scan" --file trivy-image.json --test-title "Trivy image (contenedor)"
+
+      - name: Aviso - umbral Trivy image (CRITICAL)
+        if: always()
+        run: python3 devsecops/scripts/check_aviso.py --tool trivy-image --file trivy-image.json
 
       - name: Save report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
         with:
           name: report-container
           path: trivy-image.json
@@ -195,7 +228,7 @@ jobs:
         if: always()
         run: |
           docker run --rm -v "${{ github.workspace }}:/w" --entrypoint chown \
-            semgrep/semgrep:1.90.0 -R "$(id -u):$(id -g)" /w || true
+            semgrep/semgrep:1.90.0@sha256:7b625711ba9b6d1a543e308967b18c01b59932490a5536a06422666474bf6ee4 -R "$(id -u):$(id -g)" /w || true
 
   # ----------------------------------------------------------------- DAST
   dast:
@@ -205,10 +238,10 @@ jobs:
     runs-on: [self-hosted, linux]
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020  # v4.4.0
         with:
           node-version: '20'
 
@@ -235,7 +268,7 @@ jobs:
         run: |
           docker run --rm --network host \
             -v "${{ github.workspace }}:/zap/wrk:rw" \
-            ghcr.io/zaproxy/zaproxy:2.15.0 \
+            ghcr.io/zaproxy/zaproxy:2.17.0@sha256:9624669db72f54d86c4b46a7064518bd9bf79d8c61a4c31befa9923489f328af \
             zap-baseline.py -t http://localhost:8080 -x zap.xml -c devsecops/config/.zap/rules.tsv
 
       - name: DAST - stop app (docker compose)
@@ -246,11 +279,17 @@ jobs:
 
       - name: Upload DAST report to DefectDojo
         continue-on-error: true
+        env:
+          DEFECTDOJO_API_KEY: ${{ secrets.DEFECTDOJO_API_KEY }}
         run: python3 devsecops/scripts/upload_to_defectdojo.py --scan-type "ZAP Scan" --file zap.xml --test-title "ZAP baseline (DAST)"
+
+      - name: Aviso - umbral ZAP (riesgo Medium o High)
+        if: always()
+        run: python3 devsecops/scripts/check_aviso.py --tool zap --file zap.xml
 
       - name: Save report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
         with:
           name: report-dast
           path: zap.xml
@@ -261,7 +300,7 @@ jobs:
         if: always()
         run: |
           docker run --rm -v "${{ github.workspace }}:/w" --entrypoint chown \
-            semgrep/semgrep:1.90.0 -R "$(id -u):$(id -g)" /w || true
+            semgrep/semgrep:1.90.0@sha256:7b625711ba9b6d1a543e308967b18c01b59932490a5536a06422666474bf6ee4 -R "$(id -u):$(id -g)" /w || true
 
   # ------------------------------------------------- Evidencias (etapa 7)
   # Cada job guarda su informe como un artefacto propio. Este job espera a que
@@ -275,7 +314,7 @@ jobs:
     runs-on: [self-hosted, linux]
     steps:
       - name: Download all reports
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
         with:
           pattern: report-*
           merge-multiple: true
@@ -285,7 +324,7 @@ jobs:
         run: ls -la reports || true
 
       - name: Upload consolidated reports
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
         with:
           name: devsecops-reports
           path: reports/
@@ -304,12 +343,33 @@ jobs:
     runs-on: [self-hosted, linux]
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
 
       - name: Download SCA report
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
         with:
           name: report-sca
 
       - name: Quality gate - npm audit (high/critical)
         run: python3 devsecops/scripts/check_npm_gate.py npm-audit.json
+
+  # ------------------------------------------------ Entrega (etapa 9)
+  # Solo se ejecuta si el gate pasa y la imagen se construyo y analizo en este
+  # run: depende de build, container, dast, gate y evidencias sin if: always(), asi
+  # que si cualquiera falla o se salta, release tambien se salta (nunca etiqueta una
+  # imagen vieja que hubiera quedado en el runner). En esta
+  # practica no hay entorno de produccion, asi que la entrega es simulada: la imagen
+  # que ha pasado todos los controles se etiqueta como version candidata y su
+  # identificador queda en el resumen del run. Con el gate en rojo este job sale
+  # como "skipped": el gate bloquea la entrega.
+  release:
+    name: Entrega - imagen candidata (simulada)
+    needs: [build, container, dast, gate, evidencias]
+    runs-on: [self-hosted, linux]
+    steps:
+      - name: Tag release candidate
+        run: |
+          tag="sos-hardened:release-${GITHUB_SHA::7}"
+          docker tag sos-hardened:ci "$tag"
+          id="$(docker image inspect --format '{{.Id}}' "$tag")"
+          echo "Imagen $tag ($id) lista para desplegar." | tee -a "$GITHUB_STEP_SUMMARY"
