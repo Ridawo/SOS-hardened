@@ -34,8 +34,9 @@ scan:
     - secret
 
 # Vulnerabilidades: cubrir tanto paquetes del SO como librerias de la app.
-vulnerability:
-  type:
+# (antes era vulnerability.type, que Trivy 0.58 marca como obsoleto)
+pkg:
+  types:
     - os
     - library
 
@@ -43,8 +44,8 @@ vulnerability:
 misconfiguration:
   include-non-failures: false
 
-# Reducir ruido de rutas que no deben analizarse.
-skip-dirs:
-  - node_modules
-  - data
-  - "**/.git"
+# No se excluye ningun directorio: en `trivy image` las dependencias de Node estan
+# en /app/node_modules y son justo lo que hay que analizar. El job `iac` hace un
+# checkout limpio, sin node_modules, asi que `trivy config` solo ve nuestros
+# ficheros. (Una version anterior tenia skip-dirs en la raiz del fichero, donde
+# Trivy no lo lee: la clave correcta seria scan.skip-dirs.)
