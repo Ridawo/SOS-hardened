@@ -1,39 +1,44 @@
 %% Diagrama 1.b: flujo ante una vulnerabilidad detectada por el pipeline de SOS-hardened
+%%{init: {"flowchart": {"wrappingWidth": 330, "nodeSpacing": 30, "rankSpacing": 40}}}%%
 flowchart TD
-    subgraph DET["Deteccion"]
+    subgraph DET["Deteccion, en el pipeline"]
         direction LR
-        A["Una herramienta detecta una vulnerabilidad<br/>npm audit, Semgrep, Trivy o ZAP"] --> B["El pipeline sube el informe a DefectDojo por API<br/>DefectDojo crea el hallazgo y deduplica"]
-        B --> D{"Es SCA (npm audit)<br/>y high o critical?<br/>(umbral del gate)"}
-        D -- "No" --> E["Etapa en modo AVISO<br/>el pipeline CONTINUA<br/>queda en el log y en los artefactos"]
-        D -- "Si" --> H["El pipeline continua hasta el final<br/>y el gate final lo evalua<br/>BLOQUEANTE: el run queda en rojo<br/>X en el commit y en el pull request<br/>GitHub avisa a quien lanzo el run<br/>segun su configuracion de notificaciones"]
+        A["Una herramienta detecta una vulnerabilidad<br/>npm audit, Semgrep, Trivy o ZAP"] --> B["El job sube el informe a DefectDojo por API<br/>reimport: crea el hallazgo o lo deduplica<br/>si la subida falla: anotacion ::warning:: DefectDojo"]
+        B --> U{"Supera el umbral<br/>de su etapa?"}
+        U -- "No" --> E["Solo queda registrado<br/>informe, artefacto y DefectDojo<br/>el pipeline CONTINUA"]
+        U -- "Si" --> BL{"La etapa es<br/>bloqueante?<br/>solo el gate de SCA"}
+        BL -- "No: modo aviso" --> W["Anotacion ::warning:: en el run y en el pull request<br/>la ven el autor y quien revise el PR<br/>el pipeline CONTINUA"]
+        BL -- "Si" --> H["Job gate: exit 1, el run queda en ROJO<br/>X en el commit y en el pull request<br/>el job release no se ejecuta<br/>GitHub avisa a quien lanzo el run"]
     end
 
-    subgraph TRI["Triaje"]
+    subgraph TRI["Triaje en DefectDojo, por el Security Team"]
         direction LR
-        K["Triaje en DefectDojo por el Security Team"] --> L{"Es falso positivo<br/>o riesgo aceptable?"}
-        L -- "Falso positivo" --> M["Se marca False Positive con justificacion<br/>no vuelve a abrirse en los siguientes imports"]
-        L -- "Riesgo aceptado" --> N["Se marca Risk Accepted<br/>con motivo y fecha de revision"]
-        L -- "No: real" --> O["Hallazgo Active<br/>se asigna prioridad y responsable"]
+        K["El Security Team revisa los hallazgos nuevos<br/>ordenados por severidad"] --> L{"Es falso<br/>positivo?"}
+        L -- "Si" --> M["Se marca False Positive con justificacion<br/>no se reabre en los siguientes reimports"]
+        L -- "No" --> L2{"Se acepta<br/>el riesgo?"}
+        L2 -- "Si" --> N["Risk Accepted<br/>con motivo y fecha de caducidad"]
+        L2 -- "No: real" --> O["Active, con prioridad por severidad y SLA<br/>responsable y fecha prevista de correccion"]
     end
 
     subgraph COR["Correccion"]
         direction LR
-        P["El desarrollador corrige<br/>dependencia o codigo, en una rama con pull request"] --> Q["Se relanza el pipeline completo"]
-        Q --> R{"Sigue apareciendo<br/>en el nuevo informe?"}
-        R -- "No" --> S["DefectDojo lo marca Mitigated<br/>al reimportar el informe"]
+        P["El responsable corrige en una rama<br/>y abre un pull request"] --> Q["El pipeline se relanza<br/>con el push o el pull request"]
+        Q --> R{"Sigue apareciendo<br/>en el informe?"}
+        R -- "No" --> S["DefectDojo lo cierra como Mitigated<br/>al reimportar, close_old_findings"]
     end
 
     DET --> TRI
-    TRI -->|"No: real"| COR
-    COR -->|"Si: sigue apareciendo, nuevo triaje"| TRI
-    TRI -->|"Falso positivo o riesgo aceptado"| Z(["Resuelta o gestionada"])
+    TRI -->|"real"| COR
+    COR -->|"Si: sigue, nuevo triaje"| TRI
+    TRI -->|"falso positivo o riesgo aceptado"| Z(["Resuelta o gestionada"])
     COR -->|"No: Mitigated"| Z
 
     classDef decision fill:#fff3cd,stroke:#b58105,color:#000
     classDef stop fill:#f8d7da,stroke:#b02a37,color:#000
     classDef go fill:#d1e7dd,stroke:#2f7d4f,color:#000
     classDef dojo fill:#e7f1ff,stroke:#2b5aa8,color:#000
-    class D,L,R decision
+    class U,BL,L,L2,R decision
     class H stop
     class E,Z go
+    class W decision
     class B,K,M,N,O,S dojo

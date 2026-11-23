@@ -159,7 +159,9 @@ repo es publico. Precauciones:
 - **No dejar que los PRs de forks externos se ejecuten solos.** En Settings -> Actions ->
   General -> "Fork pull request workflows from outside collaborators", elegir
   **Require approval for all outside collaborators** (o, mas estricto, desactivar los
-  workflows para forks). Revisar el codigo del PR antes de aprobar su ejecucion.
+  workflows para forks). Revisar el codigo del PR antes de aprobar su ejecucion. En este
+  repo esta aplicado desde el 18-nov-2026 (`approval_policy: all_external_contributors`;
+  se comprueba con `gh api repos/Ridawo/SOS-hardened/actions/permissions/fork-pr-contributor-approval`).
 - El workflow dispara con `push` y `pull_request`. Evitar `pull_request_target` y no pasar
   secretos a codigo de forks (GitHub no da los secretos a los PRs de forks con
   `pull_request`, pero el codigo del PR si se ejecutaria en este equipo).
