@@ -17,7 +17,7 @@
   - https://sos2526-11.onrender.com/api/v2/literacy-rates/docs (developed by Tomás Gutiérrez García - v2)
   - https://sos2526-11.onrender.com/api/v2/road-fatalities/docs (developed by José Fernández Montero - v2).
 
-## About this fork
+## About this fork:
 
 This repository is a fork of [gti-sos/SOS2526-11](https://github.com/gti-sos/SOS2526-11), the project above, built last year for the course SOS by Tomás, José and me. All credit for the original application goes to the three of us, as listed in the Team section — this fork doesn't change that.
 
