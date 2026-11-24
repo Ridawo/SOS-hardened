@@ -1,104 +1,118 @@
 # Montaje DevSecOps de SOS-hardened (PAI-4)
 
-Pipeline de GitHub Actions que analiza la aplicacion SOS con cuatro herramientas libres,
-sube los resultados a DefectDojo y bloquea la ejecucion si hay dependencias con
-vulnerabilidades altas o criticas.
+Pipeline de GitHub Actions que analiza la aplicación SOS con cuatro herramientas libres,
+guarda los informes como artefactos y bloquea la entrega si hay dependencias con
+vulnerabilidades altas o críticas.
 
 - Workflow: [`.github/workflows/devsecops.yml`](../.github/workflows/devsecops.yml)
   (el `cicd.yaml` anterior se deja como referencia).
-- Se ejecuta en un runner self-hosted (`runs-on: [self-hosted, linux]`) con los eventos
-  `push` y `pull_request`.
-- Los puertos: app SOS en 8080 y DefectDojo en 8082.
+- Todo el pipeline corre en runners de GitHub (`runs-on: ubuntu-latest`). No hay ningún
+  runner propio ni en esta máquina ni en otra.
+- Eventos: `push` y `pull_request`. La publicación en GHCR solo se hace en `push`.
+- Puertos: la app SOS escucha en el 8080 dentro del job `dast`. DefectDojo, que es local,
+  va en el 8082 (ver [`defectdojo/README.md`](defectdojo/README.md)).
 
-## Herramientas y etapa
+## Herramientas
 
-| Tipo | Herramienta | Que analiza | Etapa | Informe | Tipo en DefectDojo |
-|---|---|---|---|---|---|
-| SCA | `npm audit` | dependencias npm | commit | `npm-audit.json` | NPM Audit v7+ Scan |
-| SAST | Semgrep 1.90.0 | codigo fuente | commit | `semgrep.json` | Semgrep JSON Report |
-| IaC y contenedor | Trivy 0.58.1 | Dockerfile, compose e imagen `sos-hardened:ci` | build | JSON | Trivy Scan |
-| DAST | ZAP baseline 2.17.0 | la app corriendo en el puerto 8080 | despliegue de prueba | `zap.xml` | ZAP Scan |
+| Tipo | Herramienta | Qué analiza | Informe |
+|---|---|---|---|
+| SCA | `npm audit` | dependencias npm | `npm-audit.json` |
+| SAST | Semgrep 1.90.0 | código fuente | `semgrep.json` |
+| IaC | Trivy 0.58.1 (modo `config`) | Dockerfile, compose | JSON |
+| Contenedor | Trivy 0.58.1 (modo `image`) | imagen `sos-hardened:ci` | JSON |
+| DAST | ZAP baseline 2.17.0 | la app corriendo en el 8080 | `zap.xml` |
 
-Semgrep, Trivy y ZAP se ejecutan como contenedores Docker fijados por version y digest, y las
-acciones de GitHub (`checkout`, `setup-node`, `upload-artifact`, `download-artifact`) por el
-SHA de su commit. La clave de DefectDojo solo llega a los pasos que suben informes. Las reglas de las herramientas estan en [`config/`](config/).
+Semgrep, Trivy y ZAP se ejecutan como contenedores Docker fijados por versión y digest.
+Las acciones de GitHub (`checkout`, `setup-node`, `upload-artifact`, `download-artifact`)
+se fijan por el SHA de su commit. Las reglas de las herramientas están en [`config/`](config/).
 
-## Jobs del pipeline
+## Etapas y jobs
 
-El workflow tiene 9 jobs. Cuatro arrancan a la vez, dos dependen de `build`, otros dos
-recogen y deciden, y el ultimo solo entrega si el gate pasa. Diagrama en [`diagrams/pipeline.mmd`](diagrams/pipeline.mmd).
+El workflow tiene 10 jobs. Cuatro arrancan a la vez, dos dependen de `build`, y después
+hay un gate de aviso, la recogida de evidencias, el gate bloqueante y la entrega.
+Diagrama en [`diagrams/pipeline.mmd`](diagrams/pipeline.mmd).
 
-| Job | Etapa | Que hace | `needs` | Artefacto |
+| Job | Etapa | Qué hace | `needs` | Artefacto |
 |---|---|---|---|---|
-| `sca` | 2 | npm audit y subida a DefectDojo | - | `report-sca` |
-| `sast` | 3 | Semgrep y subida | - | `report-sast` |
-| `iac` | 5a | Trivy config (Dockerfile, compose) y subida | - | `report-iac` |
-| `build` | 4 | `docker build -t sos-hardened:ci .` | - | ninguno |
-| `container` | 5b | Trivy image sobre `sos-hardened:ci` y subida | `build` | `report-container` |
-| `dast` | 6 | levanta la app, ZAP baseline en el 8080, la para y sube | `build` | `report-dast` |
-| `evidencias` | 7 | junta los `report-*` en `devsecops-reports` (30 dias) | `sca, sast, iac, container, dast` (`if: always()`) | `devsecops-reports` |
-| `gate` | 8 | `check_npm_gate.py npm-audit.json` (bloqueante) | `sca, sast, iac, container, dast` (`if: always()`) | - |
-| `release` | 9 | entrega simulada: etiqueta la imagen como candidata | `build, container, dast, gate, evidencias` (sin `if: always()`) | - |
+| `sca` | 2 | `npm audit` sobre las dependencias | - | `report-sca` |
+| `sast` | 3 | Semgrep sobre el código | - | `report-sast` |
+| `iac` | 5a | Trivy config sobre Dockerfile y compose | - | `report-iac` |
+| `build` | 4 | `docker build -t sos-hardened:ci .` y guarda la imagen comprimida | - | `app-image` (1 día) |
+| `container` | 5b | Trivy image sobre `sos-hardened:ci` | `build` | `report-container` |
+| `dast` | 6 | carga la imagen, levanta la app en el 8080 con secretos aleatorios y pasa ZAP baseline | `build` | `report-dast` |
+| `gate-aviso` | 5c | quality gate de aviso sobre SAST e IaC | `sast, iac` (`if: always()`) | - |
+| `evidencias` | 7 | junta los `report-*` en un único artefacto | `sca, sast, iac, container, dast` (`if: always()`) | `devsecops-reports` (30 días) |
+| `gate` | 8 | quality gate bloqueante sobre npm audit | `sca, sast, iac, container, dast, gate-aviso` (`if: always()`) | - |
+| `release` | 9 | publica la imagen en GHCR | `build, container, dast, gate, evidencias` | - |
 
-- Cada job hace su propio checkout, sube su informe a DefectDojo y lo guarda como artefacto.
-- Los jobs que usan contenedores como root (`sast`, `iac`, `container`, `dast`) terminan con
-  un paso `chown` del workspace al usuario del runner.
-- `concurrency: devsecops` evita dos ejecuciones a la vez: comparten el daemon Docker, la
-  imagen `sos-hardened:ci` y el puerto 8080.
-- Un runner ejecuta un solo job a la vez. Para que el paralelismo sea real hay que tener 4 runners
-  en la misma maquina (`kali-ridao` y `kali-ridao-2/3/4`) (ver [`runner/README.md`](runner/README.md)).
+- `sca`, `sast` e `iac` no tienen aviso propio: su resultado se evalúa en `gate-aviso`
+  (SAST e IaC) y en `gate` (SCA).
+- `container` y `dast` llevan su propio aviso (ver tabla de umbrales).
+- `release` solo se ejecuta en `push`, con permisos `contents: read` y `packages: write`.
+  Carga `app-image` y la sube a GHCR como `ghcr.io/<owner en minúsculas>/sos-hardened:release-<sha7>`.
 
-## Quality gate
+## Quality gates: bloqueante y aviso
 
-El gate bloqueante es el SCA: `scripts/check_npm_gate.py npm-audit.json` suma las
-vulnerabilidades `high` y `critical` de `npm-audit.json` y sale con codigo 1 si hay alguna,
-con lo que el run queda en rojo.
+Hay dos tipos de control. Solo uno puede poner el pipeline en rojo.
 
-Es el job `gate`, que espera a **todas las herramientas** (`needs: sca, sast, iac, container, dast`,
-en paralelo con `evidencias`), y no va justo despues del SCA para que Semgrep, Trivy y ZAP tambien se
-ejecuten y suban su informe en cada run. Si el gate cortara pronto, el DAST nunca se
-ejecutaria mientras haya dependencias vulnerables. Si el gate falla, el job `release` no se
-ejecuta: la imagen no se entrega.
+### Bloqueante (Etapa 8, job `gate`)
 
-El resto de herramientas van en modo aviso (`continue-on-error: true`): generan informe y no
-tumban el pipeline, pero cada una tiene un umbral. Si se supera, `scripts/check_aviso.py` deja
-una anotacion `::warning::` que se ve en el resumen del run y en el pull request:
+`scripts/check_npm_gate.py npm-audit.json` suma las vulnerabilidades `high` y `critical`
+de npm audit y sale con código 1 si hay alguna. El run queda en rojo y el job `release`
+no se ejecuta: la imagen no se entrega.
 
-| Herramienta | Aviso si hay mas de 0... |
-|---|---|
-| Semgrep | resultados con severidad WARNING o ERROR |
-| Trivy config | errores de configuracion HIGH o CRITICAL |
-| Trivy image | vulnerabilidades CRITICAL |
-| ZAP baseline | alertas de riesgo Medium o High |
+El gate espera a **todas** las herramientas (`needs` de los cinco jobs de análisis y de
+`gate-aviso`) y no va justo después del SCA. Así Semgrep, Trivy y ZAP también se ejecutan
+y suben su informe en cada run, aunque las dependencias ya estén rotas.
 
-Las dependencias de SOS siguen vulnerables a proposito (35 segun `npm audit`: 5 criticas,
-19 altas, 11 moderadas), asi que el gate falla en este repo mientras no se actualicen. Es el
-comportamiento esperado de la practica.
+### Aviso (Etapa 5c y avisos de `container` y `dast`)
 
-## Flujo de resultados a DefectDojo
+Los controles de aviso tienen `continue-on-error: true` y nunca tumban el pipeline. Si se
+supera el umbral, el script `scripts/check_aviso.py` deja una anotación `::warning::` que
+se ve en el resumen del run y en el pull request.
 
+| Control | Job | Umbral de aviso |
+|---|---|---|
+| Semgrep | `gate-aviso` | más de 0 resultados con severidad WARNING o ERROR |
+| Trivy config | `gate-aviso` | más de 0 errores de configuración HIGH o CRITICAL |
+| Trivy image | `container` | más de 0 vulnerabilidades CRITICAL |
+| ZAP baseline | `dast` | más de 0 alertas de riesgo Medium o High |
+
+### Estado actual
+
+Las dependencias de SOS siguen vulnerables a propósito (35 según `npm audit`: 5 críticas,
+19 altas y 11 moderadas). Por eso el gate falla en este repo mientras no se actualicen.
+Es el comportamiento esperado para la práctica.
+
+## Artefactos
+
+- Cada job de análisis sube su informe como `report-*`.
+- `evidencias` junta todos en `devsecops-reports`, que se guarda 30 días. Es el artefacto
+  que se descarga para importar en DefectDojo.
+- `app-image` es la imagen Docker comprimida. Solo la usan `container`, `dast` y `release`,
+  y caduca al día.
+
+## Importación manual a DefectDojo
+
+El pipeline no sube nada a DefectDojo y no depende de ningún equipo local para terminar.
+La importación se hace a mano desde el portátil, después de cada run:
+
+```bash
+devsecops/scripts/importar_defectdojo.sh <run_id>
 ```
-herramienta -> informe (json/xml) -> scripts/upload_to_defectdojo.py -> DefectDojo
-                                      POST /api/v2/reimport-scan/
-```
 
-- El script usa `DEFECTDOJO_URL` (por defecto `http://localhost:8082`) y `DEFECTDOJO_API_KEY`
-  (secreto de GitHub, nunca en el repo).
-- Con `auto_create_context=true` se crean solos el producto `SOS-hardened (PAI-4)` y el
-  engagement `CI-CD`; cada subida lleva el commit, el numero de run y la rama.
-- Cada herramienta tiene un test fijo (`--test-title`); con `reimport` y
-  `close_old_findings=true` los hallazgos no se duplican y los que desaparecen se cierran.
-- Si DefectDojo no responde, el script sale con 0 y no rompe el pipeline, pero deja una
-  anotacion `::warning::` para que la subida fallida no pase desapercibida.
+El script:
 
-## Que hay que tener encendido
+1. Descarga el artefacto `devsecops-reports` del run con `gh run download`.
+2. Llama 5 veces a `scripts/upload_to_defectdojo.py`, que usa la API `reimport-scan`
+   de DefectDojo, una vez por cada informe.
 
-El runner y DefectDojo tienen que estar encendidos mientras corre el pipeline. Pasos en:
+Requisitos: `gh` autenticado en el repo y DefectDojo levantado en `http://localhost:8082`.
+La clave de la API se pasa en la variable `DEFECTDOJO_API_KEY` o el script la pide sin eco.
+Los pasos para levantar DefectDojo y crear la clave están en
+[`defectdojo/README.md`](defectdojo/README.md).
 
-- [`runner/README.md`](runner/README.md): registrar y ejecutar el self-hosted runner, y sus
-  riesgos de seguridad en un repo publico.
-- [`defectdojo/README.md`](defectdojo/README.md): levantar DefectDojo en el 8082, sacar la
-  contrasena de admin y crear la API key.
+Para saber el `<run_id>`: `gh run list --repo Ridawo/SOS-hardened --workflow devsecops.yml`.
 
 ## Estructura de `devsecops/`
 
@@ -106,11 +120,11 @@ El runner y DefectDojo tienen que estar encendidos mientras corre el pipeline. P
 devsecops/
   README.md              este fichero
   config/                semgrep.yml, .zap/rules.tsv, trivy.yaml
-  scripts/               upload_to_defectdojo.py, check_npm_gate.py, check_aviso.py
+  scripts/               upload_to_defectdojo.py, check_npm_gate.py, check_aviso.py,
+                         importar_defectdojo.sh
   defectdojo/            README.md y docker-compose.yml (puerto 8082)
-  runner/                README.md del self-hosted runner
   diagrams/              pipeline.mmd, vuln-flow.mmd (diagramas Mermaid)
 ```
 
-Los diagramas del pipeline y del flujo de una vulnerabilidad estan en
+Los diagramas del pipeline y del flujo de una vulnerabilidad están en
 [`diagrams/`](diagrams/).
