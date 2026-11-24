@@ -3,17 +3,17 @@
 flowchart TD
     subgraph DET["Deteccion, en el pipeline"]
         direction LR
-        A["Una herramienta detecta una vulnerabilidad<br/>npm audit, Semgrep, Trivy o ZAP"] --> B["El job sube el informe a DefectDojo por API<br/>reimport: crea el hallazgo o lo deduplica<br/>si la subida falla: anotacion ::warning:: DefectDojo"]
-        B --> U{"Supera el umbral<br/>de su etapa?"}
-        U -- "No" --> E["Solo queda registrado<br/>informe, artefacto y DefectDojo<br/>el pipeline CONTINUA"]
+        A["Una herramienta detecta una vulnerabilidad<br/>npm audit, Semgrep, Trivy o ZAP"] --> B["El job guarda el informe como artefacto del run<br/>devsecops-reports, 30 dias"]
+        B --> U{"Supera el umbral: gate de aviso<br/>SAST + IaC, Trivy image, ZAP<br/>o gate final de SCA?"}
+        U -- "No" --> E["Solo queda registrado<br/>informe y artefacto del run<br/>el pipeline CONTINUA"]
         U -- "Si" --> BL{"La etapa es<br/>bloqueante?<br/>solo el gate de SCA"}
         BL -- "No: modo aviso" --> W["Anotacion ::warning:: en el run y en el pull request<br/>la ven el autor y quien revise el PR<br/>el pipeline CONTINUA"]
-        BL -- "Si" --> H["Job gate: exit 1, el run queda en ROJO<br/>X en el commit y en el pull request<br/>el job release no se ejecuta<br/>GitHub avisa a quien lanzo el run"]
+        BL -- "Si" --> H["Job gate: exit 1, el run queda en ROJO<br/>X en el commit y en el pull request<br/>release no se ejecuta<br/>la imagen no se publica en GHCR<br/>GitHub avisa a quien lanzo el run"]
     end
 
     subgraph TRI["Triaje en DefectDojo, por el Security Team"]
         direction LR
-        K["El Security Team revisa los hallazgos nuevos<br/>ordenados por severidad"] --> L{"Es falso<br/>positivo?"}
+        K["Importacion manual tras el run: importar_defectdojo.sh run_id<br/>reimport crea el hallazgo o lo deduplica<br/>El Security Team revisa los hallazgos nuevos<br/>ordenados por severidad"] --> L{"Es falso<br/>positivo?"}
         L -- "Si" --> M["Se marca False Positive con justificacion<br/>no se reabre en los siguientes reimports"]
         L -- "No" --> L2{"Se acepta<br/>el riesgo?"}
         L2 -- "Si" --> N["Risk Accepted<br/>con motivo y fecha de caducidad"]

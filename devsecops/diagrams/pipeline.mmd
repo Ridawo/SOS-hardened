@@ -1,9 +1,9 @@
-%% Diagrama 1.a: pipeline DevSecOps de SOS-hardened (GitHub Actions, runner self-hosted)
-%% Fichero del pipeline: .github/workflows/devsecops.yml (9 jobs)
+%% Diagrama 1.a: pipeline DevSecOps de SOS-hardened (GitHub Actions, runners de GitHub)
+%% Fichero del pipeline: .github/workflows/devsecops.yml (10 jobs)
 %% Amarillo = quality gate en modo AVISO, rojo = quality gate BLOQUEANTE, azul = DefectDojo
 %%{init: {"flowchart": {"wrappingWidth": 330, "nodeSpacing": 30, "rankSpacing": 45}}}%%
 flowchart LR
-    DEV["push o pull request<br/>runs-on: self-hosted, linux<br/>concurrency: devsecops"]
+    DEV["push o pull request<br/>runs-on: ubuntu-latest<br/>(runners de GitHub)"]
 
     subgraph P["Fase 1: sin needs, arrancan a la vez"]
         direction TB
@@ -11,24 +11,28 @@ flowchart LR
             SCA["Etapa 2: SCA, npm audit<br/>npm-audit.json, report-sca<br/>se evalua en el gate final"]
         end
         subgraph J2["job sast"]
-            SAST["Etapa 3: SAST, Semgrep 1.90.0<br/>semgrep.json, report-sast<br/>AVISO si WARNING o ERROR mayor que 0"]
+            SAST["Etapa 3: SAST, Semgrep 1.90.0<br/>semgrep.json, report-sast"]
         end
         subgraph J3["job iac"]
-            IAC["Etapa 5a: IaC, Trivy 0.58.1 config<br/>trivy-config.json, report-iac<br/>AVISO si HIGH o CRITICAL mayor que 0"]
+            IAC["Etapa 5a: IaC, Trivy 0.58.1 config<br/>trivy-config.json, report-iac"]
         end
         subgraph J4["job build"]
-            BUILD["Etapa 4: Build<br/>docker build sos-hardened:ci"]
+            BUILD["Etapa 4: Build<br/>docker build sos-hardened:ci<br/>docker save, artefacto app-image"]
         end
     end
 
     subgraph Q["Fase 2: needs build"]
         direction TB
         subgraph J5["job container"]
-            CONT["Etapa 5b: Trivy 0.58.1 image<br/>trivy-image.json, report-container<br/>BD de CVE en volumen trivy-cache<br/>AVISO si CRITICAL mayor que 0"]
+            CONT["Etapa 5b: Trivy 0.58.1 image<br/>trivy-image.json, report-container<br/>docker load de app-image<br/>AVISO si CRITICAL mayor que 0"]
         end
         subgraph J6["job dast"]
-            DAST["Etapa 6: DAST, ZAP baseline 2.17.0<br/>app en el 8080, secretos aleatorios<br/>zap.xml, report-dast<br/>AVISO si riesgo Medium o High mayor que 0"]
+            DAST["Etapa 6: DAST, ZAP baseline 2.17.0<br/>docker load de app-image<br/>app en el 8080, secretos aleatorios<br/>zap.xml, report-dast<br/>AVISO si riesgo Medium o High mayor que 0"]
         end
+    end
+
+    subgraph JGA["job gate-aviso: needs sast, iac; if: always"]
+        GA["Etapa 5c: QUALITY GATE DE AVISO<br/>nunca falla<br/>Semgrep WARNING o ERROR mayor que 0<br/>Trivy config HIGH o CRITICAL mayor que 0<br/>anotacion ::warning::"]
     end
 
     FIN{{"needs: sca, sast, iac,<br/>container, dast<br/>if: always"}}
@@ -38,13 +42,15 @@ flowchart LR
     end
 
     subgraph J8["job gate"]
-        GATE["Etapa 8: QUALITY GATE<br/>BLOQUEANTE<br/>check_npm_gate.py<br/>high + critical mayor que 0"]
+        GATE["Etapa 8: QUALITY GATE<br/>BLOQUEANTE<br/>check_npm_gate.py<br/>high + critical mayor que 0<br/>needs: herramientas y gate-aviso"]
     end
 
     subgraph J9["job release"]
-        REL["Etapa 9: Entrega simulada<br/>needs: build, container, dast,<br/>gate, evidencias<br/>etiqueta la imagen candidata"]
+        REL["Etapa 9: Entrega, solo en push<br/>needs: build, container, dast,<br/>gate, evidencias<br/>publica la imagen en GHCR<br/>:release-sha7"]
     end
 
+    GHCR[("ghcr.io/owner/sos-hardened")]
+    IMP["Importacion manual en local<br/>importar_defectdojo.sh run_id<br/>gh run download y 5 reimport-scan"]
     DOJO[("DefectDojo, puerto 8082<br/>Product SOS-hardened PAI-4<br/>Engagement CI-CD<br/>reimport, deduplicacion<br/>y priorizacion")]
 
     DEV --> P
@@ -60,22 +66,24 @@ flowchart LR
     J8 -->|"= 0: pasa"| J9
     J7 --> J9
     J9 --> OK(["Pipeline en verde"])
-    J8 -->|"mayor que 0: exit 1"| KO(["Pipeline en rojo<br/>release no se ejecuta"])
+    J8 -->|"mayor que 0: exit 1"| KO(["Pipeline en rojo<br/>release no se ejecuta<br/>la imagen no se publica"])
 
-    J1 -.->|"NPM Audit v7+ Scan"| DOJO
-    J2 -.->|"Semgrep JSON Report"| DOJO
-    J3 -.->|"Trivy Scan"| DOJO
-    J5 -.->|"Trivy Scan"| DOJO
-    J6 -.->|"ZAP Scan"| DOJO
+    J9 -->|"docker push"| GHCR
+    J7 -.->|"artefacto devsecops-reports"| IMP
+    IMP -.->|"NPM Audit, Semgrep, Trivy x2, ZAP"| DOJO
+
+    J2 --> GA
+    J3 --> GA
+    GA -->|"avisa"| J8
 
     classDef aviso fill:#fff3cd,stroke:#b58105,color:#000
     classDef bloqueante fill:#f8d7da,stroke:#b02a37,color:#000
     classDef ok fill:#d1e7dd,stroke:#2f7d4f,color:#000
     classDef dojo fill:#e7f1ff,stroke:#2b5aa8,color:#000
     classDef neutro fill:#f1f3f5,stroke:#6c757d,color:#000
-    class SCA,SAST,IAC,CONT,DAST aviso
+    class CONT,DAST,GA aviso
     class GATE,KO bloqueante
-    class OK,REL ok
+    class OK,REL,GHCR ok
     class DOJO dojo
-    class BUILD,EVI,DEV,FIN neutro
-    linkStyle 14,15,16,17,18 stroke:#2b5aa8,stroke-width:2px,stroke-dasharray:6 4
+    class BUILD,EVI,DEV,FIN,SCA,SAST,IAC,IMP neutro
+    linkStyle 15,16 stroke:#2b5aa8,stroke-width:2px,stroke-dasharray:6 4
