@@ -11,8 +11,9 @@ Cada herramienta tiene un test fijo dentro del engagement, identificado por su
 compara el informe con el que ya hay: los hallazgos que siguen apareciendo no se
 duplican, los nuevos se crean y los que ya no aparecen se cierran (Mitigated).
 
-Pensado para correr dentro del pipeline (self-hosted runner en Kali). Usa SOLO
-la libreria estandar de Python (urllib): no requiere `pip install` ni
+Lo lanza a mano importar_defectdojo.sh desde el portatil, con los informes del run
+ya descargados. El pipeline de GitHub no sube nada a DefectDojo. Usa SOLO la
+libreria estandar de Python (urllib): no requiere `pip install` ni
 actions/setup-python, basta el python3 del sistema.
 
 Diseno robusto:
@@ -27,8 +28,10 @@ Diseno robusto:
 Variables de entorno:
 - DEFECTDOJO_URL      (por defecto http://localhost:8082)
 - DEFECTDOJO_API_KEY  (obligatoria)
-- GITHUB_SHA / GITHUB_RUN_ID / GITHUB_REF_NAME  (opcionales; se envian como
-  commit_hash / build_id / branch_tag si existen)
+- DD_COMMIT_HASH / DD_BUILD_ID / DD_BRANCH_TAG  (opcionales; commit, run y rama
+  del run analizado, que fija importar_defectdojo.sh). Si no estan, se usan
+  GITHUB_SHA / GITHUB_RUN_ID / GITHUB_REF_NAME. Se envian como commit_hash /
+  build_id / branch_tag.
 """
 
 import argparse
@@ -75,11 +78,14 @@ def build_fields(args):
         "verified": "false",
         "minimum_severity": MINIMUM_SEVERITY,
     }
-    # Metadatos de CI, solo si GitHub Actions los expone.
-    for env_var, field in (("GITHUB_SHA", "commit_hash"),
-                           ("GITHUB_RUN_ID", "build_id"),
-                           ("GITHUB_REF_NAME", "branch_tag")):
-        value = os.environ.get(env_var)
+    # Metadatos de CI. Las variables DD_* las fija importar_defectdojo.sh con los datos
+    # del run analizado (en un workflow_run, GITHUB_SHA y GITHUB_RUN_ID son los del
+    # propio workflow de subida, no los del analisis); si no estan, se usan las de
+    # GitHub Actions.
+    for override, env_var, field in (("DD_COMMIT_HASH", "GITHUB_SHA", "commit_hash"),
+                                     ("DD_BUILD_ID", "GITHUB_RUN_ID", "build_id"),
+                                     ("DD_BRANCH_TAG", "GITHUB_REF_NAME", "branch_tag")):
+        value = os.environ.get(override) or os.environ.get(env_var)
         if value:
             fields[field] = value
     return fields
@@ -169,6 +175,9 @@ def main(argv=None):
         return 0
 
     body_preview = text if len(text) <= 4000 else text[:4000] + "...(truncado)"
+    # Cada linea con prefijo: la respuesta puede reflejar texto de un informe y, si
+    # una linea empezara por "::", GitHub Actions la tomaria como un comando.
+    body_preview = "\n".join("  | " + line for line in body_preview.splitlines())
     if 200 <= status < 300:
         print("[OK] Informe subido. HTTP %s" % status)
         print(body_preview)
