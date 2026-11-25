@@ -115,8 +115,9 @@ al 8082 del portátil. No se abre nada a internet.
 
    (Si se prefiere, se puede instalar desde el repositorio apt que indica
    <https://tailscale.com/download/linux>.) `tailscale up` abre un enlace para iniciar sesión.
-   Luego `tailscale status` muestra el nombre de la máquina; el nombre completo
-   (`<maquina>.<tailnet>.ts.net`) sale con `tailscale status --json | grep DNSName`.
+   Luego `tailscale ip -4` da la IP del portátil en el tailnet (`100.x.y.z`), que es la que
+   usa el secreto `DEFECTDOJO_URL`. Se usa la IP y no el nombre MagicDNS porque en los runners
+   de GitHub la resolución de nombres del tailnet no siempre funciona.
 
 2. Comprobar que DefectDojo se ve por el tailnet. No hace falta `tailscale serve`: Docker
    publica el 8082 en todas las interfaces, también en la de Tailscale (`tailscale0`), y lo que
@@ -162,7 +163,7 @@ al 8082 del portátil. No se abre nada a internet.
    ```bash
    gh secret set TS_OAUTH_CLIENT_ID  --repo Ridawo/SOS-hardened   # ID del cliente OAuth
    gh secret set TS_OAUTH_SECRET     --repo Ridawo/SOS-hardened   # secreto del cliente OAuth
-   gh secret set DEFECTDOJO_URL      --repo Ridawo/SOS-hardened   # http://<maquina>.<tailnet>.ts.net:8082
+   gh secret set DEFECTDOJO_URL      --repo Ridawo/SOS-hardened   # http://100.x.y.z:8082 (IP de tailscale ip -4)
    gh secret set DEFECTDOJO_API_KEY  --repo Ridawo/SOS-hardened   # la API key de DefectDojo
    ```
 

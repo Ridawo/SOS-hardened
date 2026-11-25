@@ -122,8 +122,8 @@ El engagement es `CI-CD` en `main` y `CI-CD rama <rama>` en el resto de ramas, p
 `close_old_findings` de una rama no cierre los hallazgos de `main`.
 
 Secretos del repo: `TS_OAUTH_CLIENT_ID`, `TS_OAUTH_SECRET`, `DEFECTDOJO_URL`
-(`http://<maquina>.<tailnet>.ts.net:8082`) y `DEFECTDOJO_API_KEY`. Son secretos porque el repo
-es público y la URL revela el nombre del tailnet. Cómo prepararlo está en
+(`http://<IP del portátil en el tailnet>:8082`) y `DEFECTDOJO_API_KEY`. Son secretos porque el repo
+es público y no hace falta publicar la dirección interna del portátil. Cómo prepararlo está en
 [`defectdojo/README.md`](defectdojo/README.md).
 
 ## Estructura de `devsecops/`
