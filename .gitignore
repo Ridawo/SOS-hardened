@@ -152,3 +152,7 @@ data/*.db
 .claude
 .playwright-mcp
 
+
+# Python
+__pycache__/
+*.pyc

@@ -2,13 +2,17 @@ import { test, expect } from '@playwright/test';
 
 const BASE_URL = 'http://localhost:8080/alcohol-consumptions-per-capita';
 
+// Credenciales del .env (ADMIN_USER / ADMIN_PASSWORD), nunca escritas en el test.
+const ADMIN_USER = process.env.ADMIN_USER;
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD;
+
 test.describe('Alcohol Consumptions - Requisitos Funcionales', () => {
   
   test.beforeEach(async ({ page }) => {
     await page.goto('http://localhost:8080/login');
     await page.waitForSelector('[data-testid="login-submit"]', { timeout: 10000 });
-    await page.fill('[data-testid="login-username"]', 'admin');
-    await page.fill('[data-testid="login-password"]', 'admin');
+    await page.fill('[data-testid="login-username"]', ADMIN_USER);
+    await page.fill('[data-testid="login-password"]', ADMIN_PASSWORD);
     await page.click('[data-testid="login-submit"]');
     await page.waitForURL('**/alcohol-consumptions-per-capita', { timeout: 15000 });
   });
@@ -17,7 +21,7 @@ test.describe('Alcohol Consumptions - Requisitos Funcionales', () => {
     // Limpiar la base de datos después de cada test
     try {
       const loginRes = await request.post('http://localhost:8080/api/v2/alcohol-consumptions-per-capita/login', {
-        data: { username: 'admin', password: 'admin' }
+        data: { username: ADMIN_USER, password: ADMIN_PASSWORD }
       });
       if (loginRes.ok()) {
         const loginData = await loginRes.json();
