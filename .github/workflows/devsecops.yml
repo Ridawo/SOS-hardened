@@ -2,18 +2,22 @@
 # Integra 4 herramientas de seguridad (SCA, SAST, DAST, IaC/contenedor) repartidas en
 # jobs que se ejecutan en paralelo en los runners de GitHub (ubuntu-latest). Cuando
 # terminan el SAST y el IaC, un quality gate de aviso (etapa 5c) revisa sus umbrales
-# (anotaciones ::warning::, nunca bloquea) y desemboca en el quality gate bloqueante
-# (etapa 8) sobre el SCA. Solo si este pasa se entrega la imagen (GHCR).
+# (anotaciones ::warning::, nunca bloquea). El quality gate bloqueante (etapa 8) sobre
+# el SCA espera a que termine, pero no usa su resultado. Solo si el gate pasa se
+# entrega la imagen (GHCR).
 #
 #   sca ---------------------------------------------\
-#   sast ---+--> gate-aviso (5c) ---------------------+--> gate (8) ---------\
-#   iac  ---/                                         |                      +--> release (9)
-#   build --> container (Trivy image) ----------------+--> evidencias (7) --/
-#         \-> dast (ZAP baseline) --------------------/
+#   sast ---+--> gate-aviso (5c) ---------------------+--> gate (8) ----------> release (9)
+#   iac  ---/                                         |                           ^
+#   build --> container (Trivy image) ----------------+--> evidencias (7) --------+
+#         \-> dast (ZAP baseline) --------------------/         \--> defectdojo (7b), no bloquea
 #
-# El pipeline no sube nada a DefectDojo. Los informes se importan a mano desde el
-# portatil (donde corre DefectDojo) con devsecops/scripts/importar_defectdojo.sh
-# <run_id>, que descarga el artefacto devsecops-reports de la ejecucion.
+# Los informes llegan solos a DefectDojo, sin subirlos a mano: el job defectdojo
+# (etapa 7b) entra en el tailnet de Tailscale como nodo efimero, descarga
+# devsecops-reports y llama 5 veces a la API (reimport-scan) del DefectDojo que corre
+# en el portatil. Es el unico job que depende de esa maquina y no bloquea nada:
+# nadie lo espera (ni gate ni release). Si el portatil esta apagado, avisa con
+# ::warning:: y los informes siguen en el artefacto para relanzarlo con Re-run.
 #
 # Las acciones se fijan por el SHA del commit de su version y las imagenes de las
 # herramientas por su digest (cadena de suministro: una etiqueta como v4 o 0.58.1 se
@@ -22,7 +26,16 @@
 # El workflow original sin seguridad (cicd.yaml) se conserva como referencia historica.
 name: DevSecOps
 
-on: [push, pull_request]
+# push solo en main: una rama con PR abierto se analiza una vez (la del PR) y no dos.
+# El push a main (el merge del PR) publica en GHCR y sube a DefectDojo en el
+# engagement CI-CD. workflow_dispatch permite lanzarlo sobre cualquier rama desde
+# la pestana Actions o con gh workflow run (por ejemplo, la rama con las
+# dependencias corregidas, para ver el gate en verde y la entrega).
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
 
 # Por defecto los jobs solo leen el repo. El unico que escribe es release (GHCR).
 permissions:
@@ -233,11 +246,6 @@ jobs:
         with:
           persist-credentials: false   # el workspace queda escribible para ZAP
 
-      - name: Setup Node.js
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020  # v4.4.0
-        with:
-          node-version: '20'
-
       - name: Download app image
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
         with:
@@ -258,9 +266,11 @@ jobs:
           export JWT_SECRET ADMIN_USER ADMIN_PASSWORD
           docker compose -p sos-hardened -f docker-compose.app.yml up -d --no-build
 
+      # Espera a que la app responda (hasta 60 s, reintentando aunque rechace la
+      # conexion). Sin dependencias nuevas: curl ya esta en el runner.
       - name: DAST - wait for app
         continue-on-error: true
-        run: npx wait-on http://localhost:8080 --timeout 60000
+        run: curl -sf -o /dev/null --retry 30 --retry-delay 2 --retry-connrefused --max-time 5 http://localhost:8080
 
       # El contenedor de ZAP escribe con su propio usuario (uid 1000), distinto del
       # del runner de GitHub: se da permiso de escritura en el workspace para zap.xml.
@@ -294,9 +304,9 @@ jobs:
   # ------------------------------------------------- Evidencias (etapa 7)
   # Cada job guarda su informe como un artefacto propio. Este job espera a que
   # terminen todos (aunque alguno falle) y los junta en un solo artefacto
-  # (devsecops-reports, 30 dias): es la evidencia de la ejecucion y lo que se descarga
-  # para importarlo a DefectDojo con importar_defectdojo.sh. El gate no lo lee:
-  # descarga directamente report-sca.
+  # (devsecops-reports, 30 dias): es la evidencia de la ejecucion y lo que el job
+  # defectdojo (etapa 7b) envia a DefectDojo. El gate no lo lee: descarga
+  # directamente report-sca.
   evidencias:
     name: Evidencias - informes
     needs: [sca, sast, iac, container, dast]
@@ -322,6 +332,126 @@ jobs:
           overwrite: true
           retention-days: 30
 
+  # ------------------------------------------ Envio a DefectDojo (etapa 7b)
+  # Envia los informes de devsecops-reports a DefectDojo por su API, sin subir nada a
+  # mano. DefectDojo corre en el portatil, que no es accesible desde internet: el
+  # runner entra en el tailnet de Tailscale como nodo efimero (se borra al acabar el
+  # job) con la etiqueta tag:ci, y la ACL del tailnet solo le deja llegar al 8082.
+  # Nadie depende de este job (ni gate ni release): continue-on-error y timeout
+  # evitan que un portatil apagado bloquee el pipeline o la entrega. Los PR de forks
+  # no tienen secretos, asi que se saltan.
+  defectdojo:
+    name: Envio a DefectDojo (Tailscale)
+    needs: evidencias
+    if: >-
+      always() && needs.evidencias.result == 'success' &&
+      (github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository)
+    continue-on-error: true
+    timeout-minutes: 10
+    runs-on: ubuntu-latest
+    steps:
+      - name: Comprobar secretos
+        id: config
+        env:
+          TS_OAUTH_CLIENT_ID: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          TS_OAUTH_SECRET: ${{ secrets.TS_OAUTH_SECRET }}
+          DEFECTDOJO_URL: ${{ secrets.DEFECTDOJO_URL }}
+          DEFECTDOJO_API_KEY: ${{ secrets.DEFECTDOJO_API_KEY }}
+        run: |
+          faltan=""
+          for nombre in TS_OAUTH_CLIENT_ID TS_OAUTH_SECRET DEFECTDOJO_URL DEFECTDOJO_API_KEY; do
+            [ -n "${!nombre}" ] || faltan="$faltan $nombre"
+          done
+          if [ -n "$faltan" ]; then
+            echo "::warning::DefectDojo no configurado (faltan los secretos:$faltan). Los informes siguen en el artefacto devsecops-reports."
+            echo "configurado=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "configurado=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout code
+        if: steps.config.outputs.configurado == 'true'
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+        with:
+          persist-credentials: false
+
+      # Entra en el tailnet como nodo efimero con la etiqueta tag:ci. El cliente OAuth
+      # necesita el scope auth_keys (escritura) y poder usar esa etiqueta.
+      - name: Conectar a Tailscale
+        if: steps.config.outputs.configurado == 'true'
+        uses: tailscale/github-action@064b10558093f38325e838ddea35486bdc6b1d5c  # v4.4.0
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:ci
+
+      - name: Download consolidated reports
+        if: steps.config.outputs.configurado == 'true'
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
+        with:
+          name: devsecops-reports
+          path: reports
+
+      # La cabecera con la API key va por stdin (-H @-) para que no salga en el log.
+      # Los reintentos dan tiempo a que el nodo del runner se propague por el tailnet.
+      - name: Comprobar que DefectDojo responde
+        id: ping
+        if: steps.config.outputs.configurado == 'true'
+        env:
+          DEFECTDOJO_URL: ${{ secrets.DEFECTDOJO_URL }}
+          DEFECTDOJO_API_KEY: ${{ secrets.DEFECTDOJO_API_KEY }}
+        run: |
+          codigo="$(printf 'Authorization: Token %s\n' "$DEFECTDOJO_API_KEY" |
+            curl -s -o /dev/null -w '%{http_code}' -H @- \
+              --retry 5 --retry-delay 5 --retry-connrefused --max-time 10 \
+              "${DEFECTDOJO_URL%/}/api/v2/users/?limit=1" || true)"
+          if [ "$codigo" = "200" ]; then
+            echo "responde=true" >> "$GITHUB_OUTPUT"
+          elif [ "$codigo" = "000" ] || [ -z "$codigo" ]; then
+            echo "::warning::DefectDojo no responde (portatil apagado?): los informes siguen en el artefacto devsecops-reports; relanza este job con Re-run cuando este encendido."
+            echo "responde=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "::error::DefectDojo responde HTTP $codigo: revisa DEFECTDOJO_API_KEY y DEFECTDOJO_URL."
+            exit 1
+          fi
+
+      # Un reimport-scan por informe. El engagement de main es "CI-CD"; en otras ramas
+      # es "CI-CD rama <rama>", para que close_old_findings de una rama no cierre los
+      # hallazgos de main.
+      - name: Enviar informes a DefectDojo
+        if: steps.ping.outputs.responde == 'true'
+        env:
+          DEFECTDOJO_URL: ${{ secrets.DEFECTDOJO_URL }}
+          DEFECTDOJO_API_KEY: ${{ secrets.DEFECTDOJO_API_KEY }}
+          DD_COMMIT_HASH: ${{ github.sha }}
+          DD_BUILD_ID: ${{ github.run_id }}
+          RAMA: ${{ github.head_ref || github.ref_name }}
+        run: |
+          if [ "$RAMA" = "main" ]; then
+            DD_ENGAGEMENT_NAME="CI-CD"
+          else
+            DD_ENGAGEMENT_NAME="CI-CD rama $RAMA"
+          fi
+          export DD_BRANCH_TAG="$RAMA" DD_ENGAGEMENT_NAME
+
+          fallos=0
+          subir() {
+            python3 -I devsecops/scripts/upload_to_defectdojo.py \
+              --scan-type "$1" --file "reports/$2" --test-title "$3" || fallos=$((fallos + 1))
+          }
+          subir "NPM Audit v7+ Scan" npm-audit.json "npm audit (SCA)"
+          subir "Semgrep JSON Report" semgrep.json "Semgrep (SAST)"
+          subir "Trivy Scan" trivy-config.json "Trivy config (IaC)"
+          subir "Trivy Scan" trivy-image.json "Trivy image (contenedor)"
+          subir "ZAP Scan" zap.xml "ZAP baseline (DAST)"
+
+          if [ "$fallos" -gt 0 ]; then
+            echo "::warning::$fallos de 5 informes no se han subido a DefectDojo. Siguen en el artefacto devsecops-reports; relanza este job con Re-run."
+            exit 1
+          fi
+          echo "5 informes enviados a DefectDojo (engagement: $DD_ENGAGEMENT_NAME)." | tee -a "$GITHUB_STEP_SUMMARY"
+
   # ------------------------------------------------ Quality gate (etapa 8)
   # Unico gate bloqueante. Espera a todas las herramientas y al gate de aviso
   # (if: always(), aunque alguno falle) y corre en paralelo con evidencias. Si no hay
@@ -332,9 +462,15 @@ jobs:
     needs: [sca, sast, iac, container, dast, gate-aviso]
     if: always()
     runs-on: ubuntu-latest
+    # Solo este job puede escribir en el pull request (para el comentario de abajo).
+    permissions:
+      contents: read
+      pull-requests: write
     steps:
       - name: Checkout code
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+        with:
+          persist-credentials: false
 
       - name: Download SCA report
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
@@ -344,17 +480,31 @@ jobs:
       - name: Quality gate - npm audit (high/critical)
         run: python3 devsecops/scripts/check_npm_gate.py npm-audit.json
 
+      # A quien avisa el gate: si falla en un pull request, deja un comentario en el
+      # PR (ademas de la X del check y del correo de GitHub al autor). En los PR de
+      # forks el token es de solo lectura y el comentario falla; no importa.
+      - name: Avisar en el pull request
+        if: failure() && github.event_name == 'pull_request'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          gh pr comment "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --body "El quality gate ha fallado: npm audit encuentra vulnerabilidades high o critical en las dependencias (o no hay informe de SCA). Detalle del run: $RUN_URL"
+
   # ------------------------------------------------ Entrega (etapa 9)
   # Solo se ejecuta si el gate pasa y la imagen se construyo y analizo en este run:
   # depende de build, container, dast, gate y evidencias sin if: always(), asi que si
   # cualquiera falla o se salta, release tambien se salta. Con el gate en rojo sale
   # como "skipped": el gate bloquea la entrega.
   # La entrega es publicar en GitHub Container Registry la misma imagen que se ha
-  # analizado. Solo en push (en un pull_request no se publica nada).
+  # analizado. Solo en el push a main o al lanzarlo con workflow_dispatch (en un
+  # pull_request no se publica nada).
   release:
     name: Entrega - publicar imagen en GHCR
     needs: [build, container, dast, gate, evidencias]
-    if: github.event_name == 'push'
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     permissions:
       contents: read
