@@ -8,7 +8,7 @@
 #   2) trivy image sos-hardened:ci  -> escanea la imagen construida (vuln+secret)
 #
 # El formato de salida y el fichero de salida los fija cada paso con --format
-# json --output <fichero> para subirlo a DefectDojo como "Trivy Scan". Aqui se
+# json --output <fichero>, que el job defectdojo envia a DefectDojo como "Trivy Scan". Aqui se
 # define un comportamiento comun. exit-code se deja en 0: Trivy es herramienta
 # de AVISO en este pipeline (el quality gate bloqueante es npm audit / SCA).
 # ---------------------------------------------------------------------------

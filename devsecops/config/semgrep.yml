@@ -5,18 +5,15 @@
 # (src/front). Dependencias: express, jsonwebtoken, cors, body-parser, nedb.
 #
 # COMO SE USA EN EL PIPELINE
-#   El workflow ejecuta Semgrep en docker (semgrep/semgrep:1.90.0) con salida
-#   JSON para subirla a DefectDojo como "Semgrep JSON Report". Semgrep admite
-#   varios --config, asi que la invocacion recomendada combina los rulesets
-#   oficiales del registry con estas reglas locales:
+#   El job sast ejecuta Semgrep en docker (semgrep/semgrep:1.90.0) con salida
+#   JSON, que el job defectdojo envia a DefectDojo como "Semgrep JSON Report".
+#   Combina los rulesets oficiales del registry con estas reglas locales:
 #
-#     semgrep --json --output semgrep.json \
-#       --config p/security-audit \
-#       --config p/javascript \
-#       --config p/nodejs \
-#       --config p/expressjs \
+#     semgrep scan --metrics=off \
 #       --config devsecops/config/semgrep.yml \
-#       src/
+#       --config p/javascript --config p/nodejs --config p/expressjs \
+#       --config p/security-audit \
+#       --json --output semgrep.json .
 #
 #   Los p/... cubren el grueso de CWE conocidas para JS/Node/Express (inyeccion,
 #   XSS, deserializacion, secretos, etc.). Si no hubiera red hacia el registry,
