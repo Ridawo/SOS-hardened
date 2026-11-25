@@ -1,9 +1,9 @@
 %% Diagrama 1.a: pipeline DevSecOps de SOS-hardened (GitHub Actions, runners de GitHub)
-%% Fichero del pipeline: .github/workflows/devsecops.yml (10 jobs)
+%% Fichero del pipeline: .github/workflows/devsecops.yml (11 jobs)
 %% Amarillo = quality gate en modo AVISO, rojo = quality gate BLOQUEANTE, azul = DefectDojo
 %%{init: {"flowchart": {"wrappingWidth": 330, "nodeSpacing": 30, "rankSpacing": 45}}}%%
 flowchart LR
-    DEV["push o pull request<br/>runs-on: ubuntu-latest<br/>(runners de GitHub)"]
+    DEV["push a main, pull request<br/>o workflow_dispatch<br/>runs-on: ubuntu-latest<br/>(runners de GitHub)"]
 
     subgraph P["Fase 1: sin needs, arrancan a la vez"]
         direction TB
@@ -27,7 +27,7 @@ flowchart LR
             CONT["Etapa 5b: Trivy 0.58.1 image<br/>trivy-image.json, report-container<br/>docker load de app-image<br/>AVISO si CRITICAL mayor que 0"]
         end
         subgraph J6["job dast"]
-            DAST["Etapa 6: DAST, ZAP baseline 2.17.0<br/>docker load de app-image<br/>app en el 8080, secretos aleatorios<br/>zap.xml, report-dast<br/>AVISO si riesgo Medium o High mayor que 0"]
+            DAST["Etapa 6: DAST, ZAP baseline 2.17.0<br/>docker load de app-image<br/>app en el 8080, secretos aleatorios<br/>zap.xml, report-dast<br/>AVISO si riesgo Medium o High"]
         end
     end
 
@@ -42,15 +42,17 @@ flowchart LR
     end
 
     subgraph J8["job gate"]
-        GATE["Etapa 8: QUALITY GATE<br/>BLOQUEANTE<br/>check_npm_gate.py<br/>high + critical mayor que 0<br/>needs: herramientas y gate-aviso"]
+        GATE["Etapa 8: QUALITY GATE<br/>BLOQUEANTE<br/>check_npm_gate.py<br/>high + critical mayor que 0<br/>needs: herramientas y gate-aviso<br/>si falla en un PR, comenta en el PR"]
     end
 
     subgraph J9["job release"]
-        REL["Etapa 9: Entrega, solo en push<br/>needs: build, container, dast,<br/>gate, evidencias<br/>publica la imagen en GHCR<br/>:release-sha7"]
+        REL["Etapa 9: Entrega, nunca en pull request<br/>needs: build, container, dast,<br/>gate, evidencias<br/>publica la imagen en GHCR<br/>:release-sha7"]
     end
 
     GHCR[("ghcr.io/owner/sos-hardened")]
-    IMP["Importacion manual en local<br/>importar_defectdojo.sh run_id<br/>gh run download y 5 reimport-scan"]
+    subgraph J7B["job defectdojo"]
+        DD["Etapa 7b: Envio a DefectDojo<br/>needs: evidencias<br/>Tailscale efimero<br/>5 reimport-scan por la API<br/>si el portatil esta apagado,<br/>avisa y no bloquea"]
+    end
     DOJO[("DefectDojo, puerto 8082<br/>Product SOS-hardened PAI-4<br/>Engagement CI-CD<br/>reimport, deduplicacion<br/>y priorizacion")]
 
     DEV --> P
@@ -69,8 +71,8 @@ flowchart LR
     J8 -->|"mayor que 0: exit 1"| KO(["Pipeline en rojo<br/>release no se ejecuta<br/>la imagen no se publica"])
 
     J9 -->|"docker push"| GHCR
-    J7 -.->|"artefacto devsecops-reports"| IMP
-    IMP -.->|"NPM Audit, Semgrep, Trivy x2, ZAP"| DOJO
+    J7 -.->|"artefacto devsecops-reports"| J7B
+    J7B -.->|"NPM Audit, Semgrep, Trivy x2, ZAP"| DOJO
 
     J2 --> GA
     J3 --> GA
@@ -85,5 +87,5 @@ flowchart LR
     class GATE,KO bloqueante
     class OK,REL,GHCR ok
     class DOJO dojo
-    class BUILD,EVI,DEV,FIN,SCA,SAST,IAC,IMP neutro
+    class BUILD,EVI,DEV,FIN,SCA,SAST,IAC,DD neutro
     linkStyle 15,16 stroke:#2b5aa8,stroke-width:2px,stroke-dasharray:6 4

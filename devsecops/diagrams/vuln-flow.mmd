@@ -7,13 +7,13 @@ flowchart TD
         B --> U{"Supera el umbral: gate de aviso<br/>SAST + IaC, Trivy image, ZAP<br/>o gate final de SCA?"}
         U -- "No" --> E["Solo queda registrado<br/>informe y artefacto del run<br/>el pipeline CONTINUA"]
         U -- "Si" --> BL{"La etapa es<br/>bloqueante?<br/>solo el gate de SCA"}
-        BL -- "No: modo aviso" --> W["Anotacion ::warning:: en el run y en el pull request<br/>la ven el autor y quien revise el PR<br/>el pipeline CONTINUA"]
-        BL -- "Si" --> H["Job gate: exit 1, el run queda en ROJO<br/>X en el commit y en el pull request<br/>release no se ejecuta<br/>la imagen no se publica en GHCR<br/>GitHub avisa a quien lanzo el run"]
+        BL -- "No: modo aviso" --> W["Anotacion ::warning:: en el run y en el PR<br/>la ven el autor y quien revise el PR<br/>el pipeline CONTINUA"]
+        BL -- "Si" --> H["Job gate: exit 1, el run queda en ROJO<br/>release no se ejecuta, no se publica en GHCR<br/>Comentario en el PR (gh pr comment)<br/>Correo de GitHub al autor del commit"]
     end
 
     subgraph TRI["Triaje en DefectDojo, por el Security Team"]
         direction LR
-        K["Importacion manual tras el run: importar_defectdojo.sh run_id<br/>reimport crea el hallazgo o lo deduplica<br/>El Security Team revisa los hallazgos nuevos<br/>ordenados por severidad"] --> L{"Es falso<br/>positivo?"}
+        K["Envio automatico: job defectdojo, reimport-scan por la API<br/>crea el hallazgo o lo deduplica<br/>El Security Team revisa los nuevos<br/>ordenados por severidad"] --> L{"Es falso<br/>positivo?"}
         L -- "Si" --> M["Se marca False Positive con justificacion<br/>no se reabre en los siguientes reimports"]
         L -- "No" --> L2{"Se acepta<br/>el riesgo?"}
         L2 -- "Si" --> N["Risk Accepted<br/>con motivo y fecha de caducidad"]
@@ -22,14 +22,14 @@ flowchart TD
 
     subgraph COR["Correccion"]
         direction LR
-        P["El responsable corrige en una rama<br/>y abre un pull request"] --> Q["El pipeline se relanza<br/>con el push o el pull request"]
+        P["El responsable corrige en una rama<br/>y abre un pull request"] --> Q["El pipeline se relanza<br/>con el pull request"]
         Q --> R{"Sigue apareciendo<br/>en el informe?"}
         R -- "No" --> S["DefectDojo lo cierra como Mitigated<br/>al reimportar, close_old_findings"]
     end
 
     DET --> TRI
     TRI -->|"real"| COR
-    COR -->|"Si: sigue, nuevo triaje"| TRI
+    COR -->|"sigue"| TRI
     TRI -->|"falso positivo o riesgo aceptado"| Z(["Resuelta o gestionada"])
     COR -->|"No: Mitigated"| Z
 
