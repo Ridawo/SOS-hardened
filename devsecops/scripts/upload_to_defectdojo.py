@@ -11,22 +11,23 @@ Cada herramienta tiene un test fijo dentro del engagement, identificado por su
 compara el informe con el que ya hay: los hallazgos que siguen apareciendo no se
 duplican, los nuevos se crean y los que ya no aparecen se cierran (Mitigated).
 
-Pensado para correr dentro del pipeline (self-hosted runner en Kali). Usa SOLO
-la libreria estandar de Python (urllib): no requiere `pip install` ni
-actions/setup-python, basta el python3 del sistema.
+Lo lanza el job `defectdojo` (etapa 7b) de .github/workflows/devsecops.yml, una vez
+por informe, tras entrar en el tailnet de Tailscale. Solo usa la libreria estandar
+de Python (urllib).
 
-Diseno robusto:
-- Si DefectDojo no responde (esta caido, timeout, red), NO rompe el pipeline:
-  imprime un warning y sale con codigo 0. Subir el informe es un paso de aviso,
-  no el quality gate (ese es check_npm_gate.py).
-- Si la API responde con error (credenciales, parseo del informe...), imprime
-  el cuerpo de la respuesta para poder depurar y sale != 0.
+Codigos de salida: 0 si la API acepta el informe, 1 si responde con error (se
+imprime el cuerpo para depurar) y 2 si falta algo o DefectDojo no responde.
+Si se ejecuta en GitHub Actions (GITHUB_ACTIONS=true) los errores se imprimen
+ademas como anotaciones ::error:: / ::warning::.
 
 Variables de entorno:
 - DEFECTDOJO_URL      (por defecto http://localhost:8082)
 - DEFECTDOJO_API_KEY  (obligatoria)
-- GITHUB_SHA / GITHUB_RUN_ID / GITHUB_REF_NAME  (opcionales; se envian como
-  commit_hash / build_id / branch_tag si existen)
+- DD_ENGAGEMENT_NAME  (opcional, por defecto "CI-CD"; el workflow usa
+  "CI-CD rama <rama>" fuera de main para no mezclar hallazgos entre ramas)
+- DD_COMMIT_HASH / DD_BUILD_ID / DD_BRANCH_TAG  (opcionales; commit, run y rama
+  del run analizado, que fija el workflow). Se envian como
+  commit_hash / build_id / branch_tag.
 """
 
 import argparse
@@ -39,7 +40,7 @@ import uuid
 # ---- Valores fijos del contrato PAI-4 -------------------------------------
 DEFAULT_URL = "http://localhost:8082"
 PRODUCT_NAME = "SOS-hardened (PAI-4)"
-ENGAGEMENT_NAME = "CI-CD"
+DEFAULT_ENGAGEMENT_NAME = "CI-CD"
 # Con auto_create_context DefectDojo exige un tipo de producto para crear el
 # producto la primera vez (si no, responde 400). Este ya existe por defecto.
 PRODUCT_TYPE_NAME = "Research and Development"
@@ -51,24 +52,33 @@ def eprint(*args):
     print(*args, file=sys.stderr)
 
 
+def annotate(level, message):
+    """Anotacion de GitHub Actions (::error::/::warning::); solo dentro de Actions.
+
+    Se escapan %, CR y LF para que el texto no pueda inyectar otro comando."""
+    if os.environ.get("GITHUB_ACTIONS") == "true":
+        safe = message.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+        print("::%s::%s" % (level, safe))
+
+
 def build_fields(args):
     """Campos del formulario multipart (sin incluir el fichero)."""
     fields = {
         "scan_type": args.scan_type,
         "auto_create_context": "true",
-        "product_name": args.product_name,
+        "product_name": PRODUCT_NAME,
         "product_type_name": PRODUCT_TYPE_NAME,
-        "engagement_name": args.engagement_name,
+        "engagement_name": os.environ.get("DD_ENGAGEMENT_NAME") or DEFAULT_ENGAGEMENT_NAME,
         "test_title": args.test_title,
         "close_old_findings": "true",
         "active": "true",
         "verified": "false",
         "minimum_severity": MINIMUM_SEVERITY,
     }
-    # Metadatos de CI, solo si GitHub Actions los expone.
-    for env_var, field in (("GITHUB_SHA", "commit_hash"),
-                           ("GITHUB_RUN_ID", "build_id"),
-                           ("GITHUB_REF_NAME", "branch_tag")):
+    # Metadatos del run analizado (los fija el workflow).
+    for env_var, field in (("DD_COMMIT_HASH", "commit_hash"),
+                           ("DD_BUILD_ID", "build_id"),
+                           ("DD_BRANCH_TAG", "branch_tag")):
         value = os.environ.get(env_var)
         if value:
             fields[field] = value
@@ -127,18 +137,18 @@ def main(argv=None):
                         help="Ruta del informe a subir.")
     parser.add_argument("--test-title", required=True,
                         help="Titulo del test; identifica el test donde se reimporta.")
-    parser.add_argument("--product-name", default=PRODUCT_NAME)
-    parser.add_argument("--engagement-name", default=ENGAGEMENT_NAME)
     args = parser.parse_args(argv)
 
     if not os.path.isfile(args.file):
         eprint("[ERROR] No existe el fichero de informe: %s" % args.file)
+        annotate("error", "No existe el informe %s" % args.file)
         return 2
 
     api_key = os.environ.get("DEFECTDOJO_API_KEY")
     if not api_key:
         eprint("[ERROR] Falta la variable de entorno DEFECTDOJO_API_KEY "
                "(obligatoria).")
+        annotate("error", "Falta DEFECTDOJO_API_KEY")
         return 2
 
     base_url = os.environ.get("DEFECTDOJO_URL", DEFAULT_URL).rstrip("/")
@@ -150,18 +160,16 @@ def main(argv=None):
 
     try:
         status, text = upload(url, api_key, fields, args.file)
-    except urllib.error.URLError as err:
-        # Sin conexion / DNS / timeout: no rompemos el pipeline.
-        eprint("[WARN] DefectDojo no responde (%s). Se omite la subida y el "
-               "pipeline continua." % err.reason)
-        return 0
-    except OSError as err:
-        # socket.timeout y similares heredan de OSError.
-        eprint("[WARN] DefectDojo no responde (%s). Se omite la subida y el "
-               "pipeline continua." % err)
-        return 0
+    except (urllib.error.URLError, OSError) as err:
+        # Sin conexion / DNS / timeout (socket.timeout hereda de OSError).
+        reason = getattr(err, "reason", err)
+        eprint("[ERROR] No se pudo subir %s: DefectDojo no responde (%s)."
+               % (args.file, reason))
+        annotate("warning", "DefectDojo no responde, no se subio %s" % args.file)
+        return 2
 
     body_preview = text if len(text) <= 4000 else text[:4000] + "...(truncado)"
+    body_preview = "\n".join("  | " + line for line in body_preview.splitlines())
     if 200 <= status < 300:
         print("[OK] Informe subido. HTTP %s" % status)
         print(body_preview)
@@ -169,6 +177,7 @@ def main(argv=None):
 
     eprint("[ERROR] La API devolvio HTTP %s" % status)
     eprint(body_preview)
+    annotate("error", "DefectDojo rechazo %s (HTTP %s)" % (args.file, status))
     return 1
 
 
